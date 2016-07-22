@@ -60,7 +60,7 @@ class get_pos(object):
     self.y = 0 # Will be assigned to y-pixel-coordinate of detected hand // Will later be converted to base frame
     self.z_camera = 0 # Will be assigned to z spatial coordinate WRT to camera
     # Arm sensor setup
-    self.distance = {}
+    self.distance = {}  
     root_name = "/robot/range/"
     sensor_name = ["left_hand_range/state","right_hand_range/state"]
     # Assigning the camera topics to viewer and checker depending on the user input
@@ -426,20 +426,19 @@ class get_pos(object):
         self.ik(self.limb,pos,self.orientation_shaker)
     # Else, move the arm towards unit vector until a depth has been detected
     else:
-    
-    print "...Moving arm..."
-    __matrix = __matrix[:3,:3]
-    # Aligns the end effector to the detected hand before moving it
-    n = self.unit_vector_to_point(self.x,self.y)
-    if self.x > width/2: # If self.x > widht/2, hand is above the camera
-        up = True # Will pass this as an argument to generate the unit vector, indicating that the hand is above
-    else: up = False
-    u_vector_gripper = self.unit_vector_gripper_frame(n)
-    u_vector = np.dot(__matrix,np.matrix([[u_vector_gripper[0]],[u_vector_gripper[1]],[u_vector_gripper[2]]]))
-    print "...Aligning arm..."
-    self.align(u_vector)
-    #self.with_check(__matrix,up)
-    self.without_check(__matrix,up)
+        print "...Moving arm..."
+        __matrix = __matrix[:3,:3]
+        # Aligns the end effector to the detected hand before moving it
+        n = self.unit_vector_to_point(self.x,self.y)
+        if self.x > width/2: # If self.x > widht/2, hand is above the camera
+            up = True # Will pass this as an argument to generate the unit vector, indicating that the hand is above
+        else: up = False
+        u_vector_gripper = self.unit_vector_gripper_frame(n)
+        u_vector = np.dot(__matrix,np.matrix([[u_vector_gripper[0]],[u_vector_gripper[1]],[u_vector_gripper[2]]]))
+        print "...Aligning arm..."
+        self.align(u_vector)
+        #self.with_check(__matrix,up)
+        self.without_check(__matrix,up)
 
   def without_check(self,__matrix,up = False):
     height, width, depth = self.frame #camera frame dimensions 
@@ -467,7 +466,7 @@ class get_pos(object):
     else:
         self.ik('right',pos,self.right_orientation_shaker,True) # Hand-shaking position for right arm
     print "Position reached...Moving to Instructor position"
-    #self.follow_up() # Follow_up instructions
+    self.follow_up() # Follow_up instructions
 
   def with_check(self,__matrix,up):
     height, width, depth = self.frame #camera frame dimensions 
