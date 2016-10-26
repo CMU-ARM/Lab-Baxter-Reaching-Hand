@@ -32,6 +32,9 @@ from baxter_core_msgs.srv import (
     SolvePositionIK,
     SolvePositionIKRequest,
 )
+from baxter_core_msgs.msg import CameraControl
+from baxter_core_msgs.msg import CameraSettings
+from lab_baxter_common.camera_control_helpers import CameraController
 import struct
 from operator import mul
 from itertools import imap
@@ -47,7 +50,7 @@ class get_pos(object):
     #Initializing for the translation
     self.left_arm = Limb('left')
     self.right_arm = Limb('right')
-    self.limb = limb_viewer 
+    self.limb = limb_viewer
     self.img_viewer = None
     self.arm_viewer = baxter_interface.Limb(limb_viewer) # Assinging the viewer to the correct limb
     self.arm_checker = baxter_interface.Limb(limb_checker) # Assigning the checker to the correct limb
@@ -60,7 +63,7 @@ class get_pos(object):
     self.y = 0 # Will be assigned to y-pixel-coordinate of detected hand // Will later be converted to base frame
     self.z_camera = 0 # Will be assigned to z spatial coordinate WRT to camera
     # Arm sensor setup
-    self.distance = {}  
+    self.distance = {}
     root_name = "/robot/range/"
     sensor_name = ["left_hand_range/state","right_hand_range/state"]
     # Assigning the camera topics to viewer and checker depending on the user input
@@ -69,21 +72,24 @@ class get_pos(object):
         camera_checker = 'right_hand_camera'
         # Subscribing to the left sensor
         self.__sensor  = rospy.Subscriber(root_name + sensor_name[0],Range, callback=self.sensorCallback, callback_args="left",queue_size=1)
-    else: 
+    else:
         self.camera_viewer = 'right_hand_camera'
         camera_checker = 'left_hand_camera'
         # Subscribing to the right sensor
         self.__sensor  = rospy.Subscriber(root_name + sensor_name[1],Range, callback=self.sensorCallback, callback_args="right",queue_size=1)
     # resetting the parameters of the viewer and checker if instructed
     if parameter_reset == True:
-        self.left_camera = baxter_interface.CameraController(self.camera_viewer)
-        self.left_camera.resolution = (640,400)
-        self.left_camera.exposure = -1
-        print "Viewer-camera parameter check"
-        self.right_camera = baxter_interface.CameraController(camera_checker)
-        self.right_camera.resolution = (640,400)
-        self.right_camera.exposure = -1
-        print "Checker-camera parameter check"
+        settings=CameraController.createCameraSettings(width=640, height=400, exposure=-1)
+        CameraController.openCameras(self.camera_viewer, camera_checker, settings=settings, settings2=settings)
+        print "Viewer-camera, checker-camera parameter check"
+        # self.left_camera = baxter_interface.CameraController(self.camera_viewer)
+        # self.left_camera.resolution = (640,400)
+        # self.left_camera.exposure = -1
+        # print "Viewer-camera parameter check"
+        # self.right_camera = baxter_interface.CameraController(camera_checker)
+        # self.right_camera.resolution = (640,400)
+        # self.right_camera.exposure = -1
+        # print "Checker-camera parameter check"
     # Subscribing to the cameras
     self.viewer_image_sub = rospy.Subscriber("/cameras/" + self.camera_viewer + "/image",Image,self.callback_viewer) # Subscribing to Camera
     self.checker_image_sub = rospy.Subscriber("/cameras/" + camera_checker + "/image",Image,self.callback_checker) # Subscribing to Camera
@@ -94,12 +100,12 @@ class get_pos(object):
     self.right_orientation_shaker = [0.510, 0.550, 0.457, 0.478]
     self.camera_gripper_offset = [0.038, 0.012, -0.142] # Offset of camera from the GRIPPER reference frame
     self._cur_joint = {
-     'left_w0': 0.196733035822, 
-     'left_w1': 0.699878733673, 
+     'left_w0': 0.196733035822,
+     'left_w1': 0.699878733673,
      'left_w2': 0,
-     'left_e0': -0.303344700458, 
-     'left_e1': 1.90098568922, 
-     'left_s0': -0.263844695215, 
+     'left_e0': -0.303344700458,
+     'left_e1': 1.90098568922,
+     'left_s0': -0.263844695215,
      'left_s1': -1.03467004025}
 
   def follow_up(self,joint_solution=None):
@@ -109,7 +115,7 @@ class get_pos(object):
     if joint_solution == None:
         joint_solution = self._cur_joint
     self.__sensor.unregister() #
-    self.viewer_image_sub.unregister() 
+    self.viewer_image_sub.unregister()
     self.checker_image_sub.unregister()
     self.arm_viewer.move_to_joint_positions(joint_solution)
 
@@ -124,7 +130,7 @@ class get_pos(object):
     '''
     This is the callback function of the viewer, i.e, the thread that the viewer creates once it's initialized.
     The viewer callback first runs a skin color detection, creates a mask from the given color range, and then
-    the hand detection is ran on the mask. The hand detection is done through a cascade classifier, and the 
+    the hand detection is ran on the mask. The hand detection is done through a cascade classifier, and the
     coordinates of the hands are assigned to the global variables x and y. To be noted that the contour drawing
     is only to provide a good display; it doesn't affect the skin detection, though it uses the same mask
     '''
@@ -134,7 +140,7 @@ class get_pos(object):
     except CvBridgeError as e:
       print(e)
     # The torque is used as a method of checking whether the arm has reached the user
-    self.torque = self.arm_viewer.endpoint_effort()  
+    self.torque = self.arm_viewer.endpoint_effort()
     self.torque = self.torque_mag(self.torque) # The torque assigned is the magnitude of the torque detected
 
     img = cv_image
@@ -143,7 +149,7 @@ class get_pos(object):
     max_YCrCb = np.array([255,173,127],np.uint8) # Create an upper bound for skin color
 
     skinRegion = cv2.inRange(converted,min_YCrCb,max_YCrCb) # Create a mask with boundaries
-    
+
     skinMask = cv2.inRange(converted,min_YCrCb,max_YCrCb) # Duplicate of the mask f
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)) # Apply a series of errosion and dilations to the mask
     #skinMask = cv2.erode(skinMask, kernel, iterations = 2) # Using an elliptical Kernel
@@ -169,25 +175,25 @@ class get_pos(object):
 
   def callback_checker(self,data):
     '''
-    This is the callback function of the checker, i.e, the thread that the checker creates once it's initialized. 
+    This is the callback function of the checker, i.e, the thread that the checker creates once it's initialized.
     The checker callback runs in the same way as the viewer callback, but its main use is to ensure that a hand
     is still detected. It does so by checking the area of the contour drawn on the image, and hence, unlike the
     viewer callback, the contour affects the hand detection. The contour area is however unstable, and might not
-    produce the best results. The skin color detection has a high range of red color as wll, making the contour 
+    produce the best results. The skin color detection has a high range of red color as wll, making the contour
     detection less stable when a red colopr is in range. Hence that is why the exposure of the checker is decreased
     so as to reduce the noise colors.
     '''
     try:
       cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
-      
+
     except CvBridgeError as e:
       print(e)
     img = cv_image
     converted = cv2.cvtColor(img,cv2.COLOR_BGR2YCR_CB) # Convert image color scheme to YCrCb
-    
+
     min_YCrCb = np.array([0,133,77],np.uint8) # Create a lower bound for the skin color
     max_YCrCb = np.array([255,173,127],np.uint8) # Create an upper bound for skin color
-    
+
     skinRegion = cv2.inRange(converted,min_YCrCb,max_YCrCb) # Create a mask with boundaries
     skinMask = cv2.inRange(converted,min_YCrCb,max_YCrCb) # Duplicate of the mask for comparison
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)) # Apply a series of errosion and dilations to the mask
@@ -196,7 +202,7 @@ class get_pos(object):
     skinMask = cv2.GaussianBlur(skinMask, (3, 3), 0) # Blur the image to remove noise
     skin = cv2.bitwise_and(img, img, mask = skinMask) # Apply the mask to the frame
 
-    height, width, depth = cv_image.shape  
+    height, width, depth = cv_image.shape
     hands_cascade = cv2.CascadeClassifier('/home/steven/ros_ws/src/test_cam/haarcascade_hand.xml')
     hands = hands_cascade.detectMultiScale(skinMask, 1.3, 5) # Detect the hands on the converted image
     for (x,y,z,h) in hands: # Get the coordinates of the hands
@@ -210,17 +216,17 @@ class get_pos(object):
     for i, c in enumerate(contours): # Draw the contour on the source frame
         area = cv2.contourArea(c)
         if area > 10000:
-            cv2.drawContours(img, contours, i, (255, 255, 0), 2) 
+            cv2.drawContours(img, contours, i, (255, 255, 0), 2)
             self.hand_area = area# - area_1
-    
-    # The following function will create a contour based on the red color scheme. This function should be enabled whenever 
+
+    # The following function will create a contour based on the red color scheme. This function should be enabled whenever
     # a red color is detected by the checker. The red color detected will alter the hand area detected, and hence will
     # detect an large area even if a hand is not in range, area corresponding to the red color. Hence the red area should be subtracted
     # from the entire detected area, to obtain the actual area of the hand
     hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
     lower_red = np.array([0, 10, 10])
     upper_red = np.array([10, 240, 240])
-    
+
     red_mask = cv2.inRange(hsv, lower_red, upper_red)
     red = cv2.bitwise_and(img, img, mask = red_mask)
 
@@ -238,19 +244,19 @@ class get_pos(object):
         self.left_arm.move_to_joint_positions(dict({
             'left_e0':-1.1339952974442922,
             'left_e1':1.2954467753692318,
-            'left_s0':0.8252816638823526, 
+            'left_s0':0.8252816638823526,
             'left_s1':0.048703890015361885,
             'left_w0':-0.14879613642488512,
             'left_w1':1.176179769111141,
-            'left_w2':0.5867476513661708}), timeout = 15.0)  
+            'left_w2':0.5867476513661708}), timeout = 15.0)
         self.right_arm.move_to_joint_positions(dict({
             'right_e0':1.0438739261560241,
             'right_e1':1.2797234722934063,
             'right_s0':-0.1257864246066039,
-            'right_s1':-0.3171505278953093, 
-            'right_w0':0.3186845086831947, 
+            'right_s1':-0.3171505278953093,
+            'right_w0':0.3186845086831947,
             'right_w1':1.1278593742927505,
-            'right_w2':-0.215907795894872}), timeout = 15.0) 
+            'right_w2':-0.215907795894872}), timeout = 15.0)
     else:
         self.left_arm.move_to_joint_positions(dict({
             'left_e0':-1.2475098757478127,
@@ -258,16 +264,16 @@ class get_pos(object):
             'left_s0':0.292990330486114,
             'left_s1':-0.12540292940963257,
             'left_w0':-0.024927187803137973,
-            'left_w1':1.301966193717745, 
-            'left_w2':0.15953400194008302}), timeout = 15.0)  
+            'left_w1':1.301966193717745,
+            'left_w2':0.15953400194008302}), timeout = 15.0)
         self.right_arm.move_to_joint_positions(dict({
             'right_e0':1.0933448065653286,
             'right_e1':1.2609322076418101,
-            'right_s0':-0.6024709544419963, 
+            'right_s0':-0.6024709544419963,
             'right_s1':-0.08053399136398422,
             'right_w0':0.2906893593042859,
             'right_w1':1.212995308020391,
-            'right_w2':-0.19251458887961942}), timeout = 15.0) 
+            'right_w2':-0.19251458887961942}), timeout = 15.0)
 
   def unit_vector_to_point(self,x,y):
     '''
@@ -283,7 +289,7 @@ class get_pos(object):
     y = height/2 - y
     # Creates a unit vector to the given point. Unit vector passes through point from the center of the camera
     n = img_proc.projectPixelTo3dRay((x,y))
-    return n 
+    return n
 
   def unit_vector_gripper_frame(self,u_vector):
     '''
@@ -297,18 +303,18 @@ class get_pos(object):
   def align(self,alignment_vector=None):
     '''
     To ensure that a inverse kinematics will return a valid joint solution set, a first alignment is needed.
-    Aligning the gripper with the unit vector to the hand's position will ensure that. 
+    Aligning the gripper with the unit vector to the hand's position will ensure that.
     '''
     if alignment_vector != None:
         alignment_vector = alignment_vector[:3] # Ensure that vector is a 3x1
     height, width, depth = self.frame # Gets the dimension of the image
-    pose = self.arm_viewer.endpoint_pose() # Gets the current pose of the end effector 
+    pose = self.arm_viewer.endpoint_pose() # Gets the current pose of the end effector
     pos = [pose['position'].x,pose['position'].y,pose['position'].z] # Gets the position
     quat = [pose['orientation'].x,pose['orientation'].y,pose['orientation'].z,pose['orientation'].w] # Gets the orientation
     __matrix = self.tf.fromTranslationRotation(pos,quat) # Rotational matrix is obtained from pos and quat
     __matrix = __matrix[:3,:3] # __matrix contain the rotational, and translational component, alongside with a last row of 0,0,0,1 i.e matrix is 4x4
     # Only the rotational part is needed for alignement purposes, i.e a 3x3
-    
+
     def alignment_to_vec(b,a): # b = z-axis vector // a = alignment vector (unit vector to point)
         '''
         Returns the rotational matrix, that wil align the vector b to a
@@ -319,7 +325,7 @@ class get_pos(object):
         a_x_b = np.cross(n_a,n_b)
         a_x_b = np.matrix([[float(a_x_b[0])],[float(a_x_b[1])],[float(a_x_b[2])]])
         mod_a = math.sqrt((float(a[0])*float(a[0]))+(float(a[1])*float(a[1]))+(float(a[2])*float(a[2])))
-        mod_b = math.sqrt((float(b[0])*float(b[0]))+(float(b[1])*float(b[1]))+(float(b[2])*float(b[2])))   
+        mod_b = math.sqrt((float(b[0])*float(b[0]))+(float(b[1])*float(b[1]))+(float(b[2])*float(b[2])))
         mod_a_x_b = math.sqrt((float(a_x_b[0])*float(a_x_b[0]))+(float(a_x_b[1])*float(a_x_b[1]))
                         +(float(a_x_b[2])*float(a_x_b[2])))
         x = a_x_b/mod_a_x_b
@@ -384,16 +390,16 @@ class get_pos(object):
     # Converts the pixel coordinates to spatial coordinates WRT the camera's frame
     pose = self.arm_viewer.endpoint_pose()
     xy = [pose['position'].x,pose['position'].y,pose['position'].z]
-    height, width, depth = self.frame #camera frame dimensions 
+    height, width, depth = self.frame #camera frame dimensions
     print "\nx-pixel: ",uv[0],"\ty-pixel: ",uv[1]
-    cx = uv[0] # x pixel of hand 
+    cx = uv[0] # x pixel of hand
     cy = uv[1] # y pixel of hand
     pix_size = 0.0025 # Camera calibration (meter/pixels); Pixel size at 1 meter height of camera
     h = self.z_camera #Height from hand to camera, when at vision place
-    x0b = xy[0] # x position of camera in baxter's base frame, when at vision place 
+    x0b = xy[0] # x position of camera in baxter's base frame, when at vision place
     y0b = xy[1] # y position of camera in baxter's base frame, when at vision place
-    x_camera_offset = .045 #x camera offset from center of the gripper  
-    y_camera_offset = -.01 #y camera offset from center of the gripper 
+    x_camera_offset = .045 #x camera offset from center of the gripper
+    y_camera_offset = -.01 #y camera offset from center of the gripper
     #Position of the object in the baxter's stationary base frame
     x_camera = (cy - (height/2))*pix_size*h -0.045 # x-coordinate in camera's frame
     y_camera = (cx - (width/2))*pix_size*h  +0.01 # y-coordiante in camera's frame
@@ -405,21 +411,21 @@ class get_pos(object):
         x_camera,y_camera,h = self.pixel_translation(uv) # Obtains the spatial x,y coordinates
         self.depth_detection(float(x_camera),float(y_camera),h) # proceeds to coordinates translation
     else:
-        self.depth_detection(0,0,0) #If a depth hasn't been detected, proceed to the depth detection 
+        self.depth_detection(0,0,0) #If a depth hasn't been detected, proceed to the depth detection
 
   def depth_detection(self,x,y,z):
     pose = self.arm_viewer.endpoint_pose()
     pos = [pose['position'].x,pose['position'].y,pose['position'].z]
     quat = [pose['orientation'].x,pose['orientation'].y,pose['orientation'].z,pose['orientation'].w]
 
-    height, width, depth = self.frame #camera frame dimensions 
+    height, width, depth = self.frame #camera frame dimensions
     __matrix = self.tf.fromTranslationRotation(pos,quat) #self.orientation_cam
     # If a depth has already been detected
     # Proceed to coordinates translation, and use inverse kinematics to move to position
-    
+
     if self.z_camera != None:
         print "depth detected"
-        z = self.z_camera 
+        z = self.z_camera
         xyz = np.dot(__matrix,np.matrix([[x],[y],[z],[1]]))
         print "\nx-coordinate obtained: ",xyz[0],"\ny-coordinate obtained: ",xyz[1],"\nz-coordinate obtained: ",xyz[2]
         pos = [xyz[0],xyz[1],xyz[2]]
@@ -441,7 +447,7 @@ class get_pos(object):
         self.without_check(__matrix,up)
 
   def without_check(self,__matrix,up = False):
-    height, width, depth = self.frame #camera frame dimensions 
+    height, width, depth = self.frame #camera frame dimensions
     while self.z_camera == None and self.torque<20: # While no depth is detcted and no torque is detected
         n = self.unit_vector_to_point(width/2,height/2)# Unit vector to the center of the camera
         # the unit vector to the center of the camera is generated, since after alignement, the hand should be almost in line with the center
@@ -453,8 +459,8 @@ class get_pos(object):
                 u_vector[2] = -u_vector[2] # negating the z-component
         elif self.limb == 'right':
             if up != True: # The inverse is true for the right arm
-                u_vector[2] = -u_vector[2]   
-        pose = self.arm_viewer.endpoint_pose()        
+                u_vector[2] = -u_vector[2]
+        pose = self.arm_viewer.endpoint_pose()
         pos = [pose['position'].x+(u_vector[0]/20),pose['position'].y+(u_vector[1]/20),pose['position'].z+(u_vector[2]/20)] # Move the arm by increments
         quat = [pose['orientation'].x,pose['orientation'].y,pose['orientation'].z,pose['orientation'].w]
         self.ik(self.limb,pos,quat)
@@ -469,7 +475,7 @@ class get_pos(object):
     self.follow_up() # Follow_up instructions
 
   def with_check(self,__matrix,up):
-    height, width, depth = self.frame #camera frame dimensions 
+    height, width, depth = self.frame #camera frame dimensions
     print self.hand_area
     while self.z_camera == None and self.torque<20 and self.hand_area>5000: # As long as hand area is detected
         if self.hand_area > 5000:
@@ -482,8 +488,8 @@ class get_pos(object):
             elif self.limb == 'right':
                 print self.limb
                 if up != True:
-                    u_vector[2] = -u_vector[2]   
-            pose = self.arm_viewer.endpoint_pose()        
+                    u_vector[2] = -u_vector[2]
+            pose = self.arm_viewer.endpoint_pose()
             pos = [pose['position'].x+(u_vector[0]/20),pose['position'].y+(u_vector[1]/20),pose['position'].z+(u_vector[2]/20)]
             quat = [pose['orientation'].x,pose['orientation'].y,pose['orientation'].z,pose['orientation'].w]
             self.ik(self.limb,pos,quat)
@@ -506,7 +512,7 @@ class get_pos(object):
     It also applies the joint states to the specified arms, i.e moves the arm. Arguments:
     - limb : the limb which is to be moved. If not specified, limb is viewer limb
     - pos,quat : pose for which joint solutions are desired
-    - block - if block is None, the motion of the joints will be done by set_joint_positions. 
+    - block - if block is None, the motion of the joints will be done by set_joint_positions.
     Else, it will be done by move_to_joint_positions.
     set_joint_positions allows the operation to be interupted (Used when moving the arm towards the hand)
     move_to_joint_positions cannot be interupted, and is used when aligning the end effector
@@ -582,7 +588,7 @@ class get_pos(object):
         joint_solution = dict(zip(resp.joints[0].name, resp.joints[0].position))
         if block == None:
             arm.set_joint_positions(joint_solution)
-        else: 
+        else:
             arm.move_to_joint_positions(joint_solution)
     else:
         print("INVALID POSE - No Valid Joint Solution Found.")
@@ -599,13 +605,13 @@ def main():
             limb = 'right'
             other_limb = 'left'
         break
-  parameter_reset = raw_input("Reset camera parameters?(y/n)")
+  parameter_reset = raw_input("Turn cameras on and reset camera parameters?(y/n)")
   querry = raw_input("Is the arm at the correct starting position?(y/n) ")
   if querry == 'y':
     rospy.init_node('get_pos', anonymous=True)
     if parameter_reset == 'y':
         position = get_pos(limb,other_limb,True)
-    else: 
+    else:
         position = get_pos(limb,other_limb,None)
     rospy.sleep(5) # Run the hand detection for a few seconds to get a constant pair of coordinates
     position.xy_translation() # Get the spatial coordinates of the detected hand
@@ -613,14 +619,14 @@ def main():
     rospy.init_node('get_pos', anonymous=True)
     if parameter_reset == 'y':
         position = get_pos(limb,other_limb,True)
-    else: 
+    else:
         position = get_pos(limb,other_limb,None)
     rospy.spin()
   else:
     rospy.init_node('get_pos', anonymous=True)
     if parameter_reset == 'y':
         position = get_pos(limb,other_limb,True)
-    else: 
+    else:
         position = get_pos(limb,other_limb,None)
     position.get_starting_pos()
 

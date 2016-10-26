@@ -1,0 +1,19 @@
+<launch>
+  <!-- you should first setup your camera grabbing/rectification nodes,
+       see image_pipeline documentation. -->
+  <arg name="camera_prefix" default="/camera/rgb"/>
+  <!-- tracking node -->
+  <node pkg="visp_tracker" type="tracker" name="tracker_mbt">
+    <param name="camera_prefix" value="$(arg camera_prefix)" />
+    <param name="tracker_type" value="mbt+klt" />
+  </node>
+
+  <!-- starts the client while setting the camera input and the model
+       which will be tracked -->
+  <node pkg="visp_tracker" type="visp_tracker_client" name="visp_tracker_mbt_client">
+    <param name="camera_prefix" value="$(arg camera_prefix)" />
+    <param name="model_name" value="AppleIphone" />
+    <param name="model_path" value="file:///home/amal/baxter_ws/src/Lab-Baxter-Reaching-Hand/kinect/models" />
+    <param name="tracker_type" value="mbt+klt" />
+  </node>
+</launch>
