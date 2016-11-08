@@ -1,7 +1,9 @@
 <launch>
      <arg name="camera" default="camera"/>
+     <arg name="topic" default="/hand_position"/>
+     <arg name="limb" default="left"/>
      <arg name="camera_link_pose" default="0.60 -0.02 1.15 0.0 0.707 -0.0 0.707"/>
-     <param name="use_sim_time" value="true"/>
+     <!-- <param name="use_sim_time" value="true"/> -->
      <!-- TODO: Figure out a way to launch openni so it is always launched before tracker. -->
      <!-- launch openni to talk to kinect -->
      <!-- <include file="$(find openni_launch)/launch/openni.launch"> -->
@@ -14,11 +16,12 @@
      </node> -->
      <!-- Users update this to set transform between camera and robot -->
      <node pkg="tf" type="static_transform_publisher" name="camera_link_broadcaster"
-           args="$(arg camera_link_pose) /torso /$(arg camera)_link 100" />
+           args="$(arg camera_link_pose) /base /$(arg camera)_link 100" />
 
      <!-- <include file="$(find baxter_moveit_config)/launch/move_group.launch"/> -->
 
-     <!-- <node pkg="lab_reaching_hand_kinect" type="ik_test.py" name="ik_test" args="-l left"/> -->
+     <node pkg="lab_reaching_hand_kinect" type="HandDetector.py" name="hand_detector" args="-t $(arg topic)"/>
+     <node pkg="lab_reaching_hand_kinect" type="MovementController.py" name="movement_controller" args="-l $(arg limb) -t $(arg topic)"/>
 
      <!-- <node pkg="lab_reaching_hand_kinect" type="reaching_hand.py" name="reaching_hand"/>
      <node pkg="rviz" type="rviz" name="rviz"/> -->
