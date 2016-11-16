@@ -80,12 +80,12 @@ class Rectangle(object):
         return (self.x+self.w/2, self.y+self.h/2)
 
 class Hand(object):
-    def __init__(self, rect, deltaX=100, deltaY=100):
+    def __init__(self, rect, maxDx, maxDy):
         if type(rect) != Rectangle:
             raise TypeException("first argument to hand must be of type rectangle")
         self.positions = [rect]
-        self.deltaX = deltaX
-        self.deltaY = deltaY
+        self.maxDx = maxDx
+        self.maxDy = maxDy
         # self.avgX, self.avgY, self.avgW, self.avgH = None, None, None, None
 
     def __str__(self):
@@ -98,8 +98,8 @@ class Hand(object):
         return self. __str__()
 
     def couldHaveMovedHere(self, rect):
-        return (abs(rect.x-self.positions[-1].x) < self.deltaX and
-        abs(rect.y-self.positions[-1].y) < self.deltaY)
+        return (abs(rect.x-self.positions[-1].x) < self.maxDx and
+        abs(rect.y-self.positions[-1].y) < self.maxDy)
 
     # returns whether the rect was appended (if the hand could viably move there).
     # if the average rect was previously calculated, it also returns
@@ -178,7 +178,9 @@ class Hand(object):
 
 class HandDetector(object):
 
-    def __init__(self, topic):
+    def __init__(self, topic, topicRate, cameraName, handModelPath, maxDx, maxDy, groundDzThreshold,
+    avgPosDtime, avgHandXYDtime, maxIterationsWithNoDifference, differenceThreshold, differenceFactor,
+    cascadeScaleFactor, cascadeMinNeighbors, handHeightIntervalDx, handHeightIntervalDy):
         self.bridge = CvBridge()
         self.fgbg = cv2.BackgroundSubtractorMOG()
         # self.display_pub= rospy.Publisher('/robot/xdisplay',Image, queue_size=10)
@@ -186,10 +188,9 @@ class HandDetector(object):
         self.handsLock = threading.Lock()
         self.shouldUpdateBaxter = False
         self.shouldUpdateBaxterLock = threading.Lock()
-        self.maxDx = 100
-        self.maxDy = 100
-        self.maxDz = 100
-        self.hands_cascade = cv2.CascadeClassifier('/home/amal/baxter_ws/src/Lab-Baxter-Reaching-Hand/kinect/haarcascade_hand.xml')
+        self.maxDx = maxDx
+        self.maxDy = maxDy
+        self.hands_cascade = cv2.CascadeClassifier(handModelPath)
         self.killThreads = False
         self.rgbData = None
         self.rgbDataLock = threading.Lock()
@@ -209,18 +210,21 @@ class HandDetector(object):
         self.avgX = None
         self.avgY = None
         self.avgZ = None
-        # TODO (amal): make these adjustable
         self.groundZ = None
-        self.dZ = 0.5 # Ignore all points with height +/- dz of groundz
-        # self.kinectRGBHeight = 480
-        # self.kinectRGBWidth = 640
-        dTime = 0.5
-        avgPosThread = threading.Thread(target=self.getAveragePosByTime, args=(dTime,))
+        self.dZ = groundDzThreshold # Ignore all points with height +/- dz of groundz
+        self.cascadeScaleFactor = cascadeScaleFactor
+        self.cascadeMinNeighbors = cascadeMinNeighbors
+        avgPosThread = threading.Thread(target=self.getAveragePosByTime, args=(avgPosDtime,topicRate))
         avgPosThread.daemon = True
         avgPosThread.start()
+        self.avgHandXYDtime = avgHandXYDtime
         self.threads = [rgbThread, depthThread, avgPosThread]
-
-        # Get the transform between the camera and base at the beginning, and assume it doesn't change
+        self.iterationsWithNoDifference = 0
+        self.maxIterationsWithNoDifference = maxIterationsWithNoDifference
+        self.differenceThreshold = differenceThreshold
+        self.differenceFactor = differenceFactor
+        self.handHeightIntervalDx = handHeightIntervalDx
+        self.handHeightIntervalDy = handHeightIntervalDy
 
     def rgbKinectcallback(self,data):
         if self.rgbDataLock.acquire(False):
@@ -228,26 +232,57 @@ class HandDetector(object):
             self.rgbDataLock.release()
 
     def cascadeClassifier(self):
+        # rate = rospy.Rate(1)
         try:
             cam_info = rospy.wait_for_message("/camera/depth/camera_info", CameraInfo, timeout=None)
             img_proc = PinholeCameraModel()
             img_proc.fromCameraInfo(cam_info)
+            img, oldImg = None, None
             while not rospy.is_shutdown() and not self.killThreads:
                 self.rgbDataLock.acquire(True)
                 if self.rgbData is None:
                     self.rgbDataLock.release()
                     continue
                 try:
+                    if img is not None:
+                        oldImg = np.copy(img)
+                        # print("reset oldImg")
                     img = self.bridge.imgmsg_to_cv2(self.rgbData, "bgr8")
                     self.rgbDataLock.release()
                 except CvBridgeError as e:
                     self.rgbDataLock.release()
                     print(e)
                     continue
+                height, width, channels = img.shape
+                # print("share", height, width, channels)
+                if oldImg is not None and img is not None:
+                    diff = np.nonzero(cv2.subtract(img, oldImg) > self.differenceThreshold)[0].shape
+                    print("diff", diff, height*width*channels, height*width*channels*self.differenceFactor)
+                    if diff[0] < height*width*channels*self.differenceFactor:
+                        self.iterationsWithNoDifference += 1
+                        print("diff < threshold, iterations", self.iterationsWithNoDifference)
+                        if self.iterationsWithNoDifference > self.maxIterationsWithNoDifference:
+                            print("remove hands")
+                            self.avgX = None
+                            self.avgY = None
+                            self.handCoordLock.acquire()
+                            self.handCoord = []
+                            self.handCoordLock.release()
+                            self.handsLock.acquire()
+                            self.hands = [] # list of hand objects
+                            self.handsLock.release()
+                            # reset background
+                            self.fgbg = cv2.BackgroundSubtractorMOG()
+                            self.iterationsWithNoDifference = 0
+                        # else:
+                            # rate.sleep()
+                            # continue
+                    else:
+                        self.iterationsWithNoDifference = 0
+
 
                 fgmask = self.fgbg.apply(img)
-                hands = self.hands_cascade.detectMultiScale(fgmask, 1.3, 5)
-                height, width, channels = img.shape
+                hands = self.hands_cascade.detectMultiScale(fgmask, self.cascadeScaleFactor, self.cascadeMinNeighbors)
                 for (x,y,w,h) in hands:
                     if not (math.isnan(x) or math.isnan(y) or math.isnan(w) or math.isnan(h)):
                         self.addToHands(x,y,w,h)
@@ -259,7 +294,9 @@ class HandDetector(object):
                         # NOTE (amal): Why I have to reverse X, I have no idea...
                         # xPrime = x
                         # yPrime = y
-                        cv2.rectangle(fgmask,(x,y),(x+w,y+h),(255,0,0),2)
+                        rectColor = (255,0,0)
+                        rectThickness = 2
+                        cv2.rectangle(fgmask,(x,y),(x+w,y+h), rectColor, rectThickness)
                         # NOTE (amal): Why I have to subtract width for x, I have no idea...
                         # midX, midY = xPrime-w/2, yPrime-h/2
                         # print("actual mid", midX, midY)
@@ -282,11 +319,15 @@ class HandDetector(object):
                     # u, v = img_proc.project3dToPixel((self.avgX, self.avgY, self.avgZ))
                     # print("uv", u, v, "avgXYZ", self.avgX, self.avgY, self.avgZ, "wh", width, height)
                     # print("avgXY", self.avgX, self.avgY)
-                    cv2.circle(fgmask, (int(self.avgX), int(self.avgY)),30,(255,255,255), 2)
+                    circleRadius  = 30
+                    circleColor = (255,0,0)
+                    circleThickness = 2
+                    cv2.circle(fgmask, (int(self.avgX), int(self.avgY)),circleRadius,circleColor,circleThickness)
                     # cv2.circle(fgmask,(int(width-midX), int(height-midY)),30,(255,0,255), 2)
 
 
                 cv2.imshow("Image window", fgmask)
+                # Number of ms to show the image for
                 cv2.waitKey(1)
         except KeyboardInterrupt, rospy.ROSInterruptException:
             return
@@ -326,12 +367,16 @@ class HandDetector(object):
             if hand.addPosition(rect):
                 self.handsLock.release()
                 return
-        self.hands.append(Hand(rect))
+        self.hands.append(Hand(rect, self.maxDx, self.maxDy))
         self.handsLock.release()
         return# None, None
 
+    # TODO (amal): what if instead of determining most likely hand by a
+    # majority vote, I augment that with how close the hand is to the center
+    # of the robot (in this case I would have to change the voting part to
+    # after we get the depth for all hands)?  Might help prevent the robot
+    # from going to either the robot arm as a hand, or tthe ground as a hand
     def getMostRecentXYOfMostLikelyHand(self):
-        dTime = 0.5
         self.handsLock.acquire()
         if len(self.hands) == 0:
             self.handsLock.release()
@@ -340,7 +385,7 @@ class HandDetector(object):
         maxNum, maxAvgPos, maxI = 0, None, None
         for i in xrange(len(self.hands)):
             hand = self.hands[i]
-            pos, num = hand.getAveragePosByTime(dTime)
+            pos, num = hand.getAveragePosByTime(self.avgHandXYDtime)
             # print("abc", pos, num, hand)
             if num > maxNum:
                 maxNum = num
@@ -383,6 +428,7 @@ class HandDetector(object):
                 rect = self.getMostRecentXYOfMostLikelyHand()
                 # print("recent pos of likely hand is ", rect)
                 if rect is None:
+                    rate.sleep()
                     # print("hand is none")
                     continue
                 # print("Most Likely Hand x y", rect)
@@ -403,11 +449,12 @@ class HandDetector(object):
                     #print("release 1")
                     self.depthDataLock.release()
                     # print("depth data is None")
+                    rate.sleep()
                     continue
                 uvs = []
                 # uvs = [(midX, midY)]
-                dx = 10
-                dy = 10
+                dx = self.handHeightIntervalDx
+                dy = self.handHeightIntervalDy
                 # TODO (amal): change this hardcoded large number!
                 # avgX, avgY, avgZ, num = float(0),float(0),float(0),0
                 avgX, avgY, avgZ, num = float(0),float(0),None,0
@@ -448,6 +495,7 @@ class HandDetector(object):
                         num += 1
                 if num == 0:
                     # print("got no points with intensity")
+                    rate.sleep()
                     continue
                 # print("avg in depth", avgX, avgY, avgZ, num)
                 avgX /= float(num)
@@ -497,8 +545,7 @@ class HandDetector(object):
 
     # Gets the average of the last handCoord that the hand has been in between
     # the current time and interval dTime seconds
-    def getAveragePosByTime(self, dTime):
-        hertz = 20
+    def getAveragePosByTime(self, dTime, hertz):
         rate = rospy.Rate(hertz)
         try:
             while not rospy.is_shutdown() and not self.killThreads:
@@ -554,12 +601,30 @@ def main(args):
     parser = argparse.ArgumentParser(formatter_class=arg_fmt,
                                      description=main.__doc__)
     parser.add_argument(
-        '-t', '--topic', required=True,
-        help="the limb to publish hand points to"
+        '-c', '--camera', required=True,
+        help="the camera name"
     )
     args = parser.parse_args(rospy.myargv()[1:])
-    rospy.init_node('HandDetector', anonymous=True)
-    ic = HandDetector(args.topic)
+    # We don't want multiple instances of this node running
+    rospy.init_node('HandDetector', anonymous=False)
+    detector = HandDetector(
+        topic=rospy.get_param("reachingHand/topic"),
+        topicRate=rospy.get_param("reachingHand/HandDetector/topicRate"),
+        cameraName=args.camera,
+        handModelPath=rospy.get_param("reachingHand/HandDetector/handModelPath"),
+        maxDx=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dx"),
+        maxDy=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dy"),
+        groundDzThreshold=rospy.get_param("reachingHand/HandDetector/groundDzThreshold"),
+        avgPosDtime=rospy.get_param("reachingHand/HandDetector/avgPosDtime"),
+        avgHandXYDtime=rospy.get_param("reachingHand/HandDetector/avgHandXYDtime"),
+        maxIterationsWithNoDifference=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/maxIterations"),
+        differenceThreshold=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/differenceThreshold"),
+        differenceFactor=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/differenceFactor"),
+        cascadeScaleFactor=rospy.get_param("reachingHand/HandDetector/cascadeClassifierParams/scale"),
+        cascadeMinNeighbors=rospy.get_param("reachingHand/HandDetector/cascadeClassifierParams/minNeighbors"),
+        handHeightIntervalDx=rospy.get_param("reachingHand/HandDetector/handHeightInterval/dx"),
+        handHeightIntervalDy=rospy.get_param("reachingHand/HandDetector/handHeightInterval/dy"),
+    )
     try:
         rospy.spin()
     except KeyboardInterrupt, rospy.ROSInterruptException:

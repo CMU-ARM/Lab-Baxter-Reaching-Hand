@@ -30,7 +30,8 @@ from MovementController import MovementController
 from HandDetector import HandDetector
 
 def main():
-    rospy.init_node('lab_reaching_hand_kinect', anonymous=True)
+    # We don't want multiple instances of this node running
+    rospy.init_node('lab_reaching_hand_kinect', anonymous=False)
     limb = "left"
     rate = rospy.Rate(2)
     dTime = 2.5
