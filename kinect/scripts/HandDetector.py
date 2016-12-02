@@ -8,6 +8,7 @@ import sys
 import rospy
 import cv2
 import math
+import copy
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -80,35 +81,37 @@ class Rectangle(object):
         return (self.x+self.w/2, self.y+self.h/2)
 
 class Hand(object):
-    def __init__(self, rect, maxDx, maxDy):
-        if type(rect) != Rectangle:
+    def __init__(self, point, maxDx, maxDy, maxDz):
+        if type(point) != PointStamped:
             raise TypeException("first argument to hand must be of type rectangle")
-        self.positions = [rect]
+        self.positions = [point]
         self.maxDx = maxDx
         self.maxDy = maxDy
+        self.maxDz = maxDz
         # self.avgX, self.avgY, self.avgW, self.avgH = None, None, None, None
 
     def __str__(self):
         string = "[\n"
-        for rect in self.positions:
-            string += "     "+str(rect)+"\n"
+        for point in self.positions:
+            string += "     "+str(point)+"\n"
         return string+"]"
 
     def __repr__(self):
         return self. __str__()
 
-    def couldHaveMovedHere(self, rect):
-        return (abs(rect.x-self.positions[-1].x) < self.maxDx and
-        abs(rect.y-self.positions[-1].y) < self.maxDy)
+    def couldHaveMovedHere(self, point):
+        return (abs(point.point.x-self.positions[-1].point.x) < self.maxDx and
+        abs(point.point.y-self.positions[-1].point.y) < self.maxDy and
+        abs(point.point.z-self.positions[-1].point.z) < self.maxDz)
 
     # returns whether the rect was appended (if the hand could viably move there).
     # if the average rect was previously calculated, it also returns
-    def addPosition(self, rect):
-        if rect.now is None:
-            # return None, None, False
-            return False
-        if self.couldHaveMovedHere(rect):
-            self.positions.append(rect)
+    def addPosition(self, point):
+        # if rect.now is None:
+        #     # return None, None, False
+        #     return False
+        if self.couldHaveMovedHere(point):
+            self.positions.append(point)
             # if self.avgX is None: # If we haven't gotten an average yet
             #     return None, None, True
             # else: # if we have gotten an average
@@ -121,31 +124,31 @@ class Hand(object):
         # return None, None, False
         return False
 
-    def getLastestPos(self):
+    def getLatestPos(self):
         if len(self.positions) == 0:
             return None
         return self.positions[-1]
 
     # Gets the average of the last nTimes positions the hand has been in
-    def getAveragePosByNum(self, nTimes):
-        if nTimes <= 0 or len(self.positions) == 0:
-            return None
-        num = min(nTimes, len(self.positions))
-        avgX, avgY, avgW, avgH = 0, 0, 0, 0
-        for i in xrange(len(self.positions)-num, len(self.positions)):
-            avgX += self.positions[i].x
-            avgY += self.positions[i].y
-            avgW += self.positions[i].w
-            avgH += self.positions[i].h
-        avgX /= num
-        avgY /= num
-        avgW /= num
-        avgH /= num
-        # self.avgX = avgX
-        # self.avgY = avgY
-        # self.avgW = avgW
-        # self.avgH = avgH
-        return Rectangle(avgX, avgY, avgW, avgH, None), nTimes
+    # def getAveragePosByNum(self, nTimes):
+    #     if nTimes <= 0 or len(self.positions) == 0:
+    #         return None
+    #     num = min(nTimes, len(self.positions))
+    #     avgX, avgY, avgW, avgH = 0, 0, 0, 0
+    #     for i in xrange(len(self.positions)-num, len(self.positions)):
+    #         avgX += self.positions[i].x
+    #         avgY += self.positions[i].y
+    #         avgW += self.positions[i].w
+    #         avgH += self.positions[i].h
+    #     avgX /= num
+    #     avgY /= num
+    #     avgW /= num
+    #     avgH /= num
+    #     # self.avgX = avgX
+    #     # self.avgY = avgY
+    #     # self.avgW = avgW
+    #     # self.avgH = avgH
+    #     return Rectangle(avgX, avgY, avgW, avgH, None), nTimes
 
     # Gets the average of the last positions that the hand has been in between
     # the current time and interval dTime seconds
@@ -154,13 +157,12 @@ class Hand(object):
             return None, 0
         now = time.time()
         # latestTime = self.positions[-1].now
-        avgX, avgY, avgW, avgH, num = 0, 0, 0, 0, 0
-        for rect in self.positions[-1::-1]: # reverse order
-            if now - rect.now <= dTime:
-                avgX += rect.x
-                avgY += rect.y
-                avgW += rect.w
-                avgH += rect.h
+        avgX, avgY, avgZ, num = 0, 0, 0, 0
+        for point in self.positions[-1::-1]: # reverse order
+            if now - point.header.stamp.secs <= dTime:
+                avgX += point.point.x
+                avgY += point.point.y
+                avgZ += point.point.z
                 num += 1
             else:
                 break # Assume times are in non-decreasing order
@@ -168,19 +170,26 @@ class Hand(object):
             return None, num
         avgX /= num
         avgY /= num
-        avgW /= num
-        avgH /= num
+        avgZ /= num
         # self.avgX = avgX
         # self.avgY = avgY
         # self.avgW = avgW
         # self.avgH = avgH
-        return Rectangle(avgX, avgY, avgW, avgH, None), num
+        pointMsg = PointStamped()
+        pointMsg.header = self.positions[-1].header
+        # pointMsg.header = Header(stamp=rospy.Time.now(), frame_id='/camera_link')
+        pointMsg.point = Point()
+        # COORDINATE TRANSFORMATION!!!!
+        pointMsg.point.x = avgX
+        pointMsg.point.y = avgY
+        pointMsg.point.z = avgZ
+        return pointMsg, num
 
 class HandDetector(object):
 
-    def __init__(self, topic, topicRate, cameraName, handModelPath, maxDx, maxDy, groundDzThreshold,
-    avgPosDtime, avgHandXYDtime, maxIterationsWithNoDifference, differenceThreshold, differenceFactor,
-    cascadeScaleFactor, cascadeMinNeighbors, handHeightIntervalDx, handHeightIntervalDy):
+    def __init__(self, topic, topicRate, cameraName, handModelPath, maxDx, maxDy, maxDz, timeToDeleteHand, groundDzThreshold,
+    avgPosDtime, avgHandXYZDtime, maxIterationsWithNoDifference, differenceThreshold, differenceFactor,
+    cascadeScaleFactor, cascadeMinNeighbors, handHeightIntervalDx, handHeightIntervalDy, getDepthAtMidpointOfHand, getAveragePos):
         self.bridge = CvBridge()
         self.fgbg = cv2.BackgroundSubtractorMOG()
         # self.display_pub= rospy.Publisher('/robot/xdisplay',Image, queue_size=10)
@@ -190,6 +199,8 @@ class HandDetector(object):
         self.shouldUpdateBaxterLock = threading.Lock()
         self.maxDx = maxDx
         self.maxDy = maxDy
+        self.maxDz = maxDz
+        self.timeToDeleteHand = timeToDeleteHand
         self.hands_cascade = cv2.CascadeClassifier(handModelPath)
         self.killThreads = False
         self.rgbData = None
@@ -197,13 +208,20 @@ class HandDetector(object):
         rgbThread = threading.Thread(target=self.cascadeClassifier)
         rgbThread.daemon = True
         rgbThread.start()
+        self.detectedHandsRect = []
+        self.detectedHandsRectLock = threading.Lock()
+        self.detectedHandsXYZ = []
+        self.detectedHandsXYZLock = threading.Lock()
         self.depthData = None
         self.depthDataLock = threading.Lock()
         depthThread = threading.Thread(target=self.getHandDepth)
         depthThread.daemon = True
         depthThread.start()
-        self.handCoord = []
-        self.handCoordLock = threading.Lock()
+        # self.handCoord = []
+        # self.handCoordLock = threading.Lock()
+        classifyHandsThread = threading.Thread(target=self.classifyHands, args=())
+        classifyHandsThread.daemon = True
+        classifyHandsThread.start()
         self.rgb_image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.rgbKinectcallback, queue_size=1)
         self.depth_registered_points_sub = rospy.Subscriber("/camera/depth_registered/points",PointCloud2,self.depthKinectcallback)
         self.handPositionPublisher = rospy.Publisher(topic, PointStamped, queue_size=1)
@@ -214,17 +232,19 @@ class HandDetector(object):
         self.dZ = groundDzThreshold # Ignore all points with height +/- dz of groundz
         self.cascadeScaleFactor = cascadeScaleFactor
         self.cascadeMinNeighbors = cascadeMinNeighbors
-        avgPosThread = threading.Thread(target=self.getAveragePosByTime, args=(avgPosDtime,topicRate))
+        avgPosThread = threading.Thread(target=self.getPosOfMostLikelyHand, args=(avgPosDtime,topicRate))
         avgPosThread.daemon = True
         avgPosThread.start()
-        self.avgHandXYDtime = avgHandXYDtime
-        self.threads = [rgbThread, depthThread, avgPosThread]
+        self.avgHandXYZDtime = avgHandXYZDtime
+        self.threads = [rgbThread, depthThread, avgPosThread, classifyHandsThread]
         self.iterationsWithNoDifference = 0
         self.maxIterationsWithNoDifference = maxIterationsWithNoDifference
         self.differenceThreshold = differenceThreshold
         self.differenceFactor = differenceFactor
         self.handHeightIntervalDx = handHeightIntervalDx
         self.handHeightIntervalDy = handHeightIntervalDy
+        self.getDepthAtMidpointOfHand = getDepthAtMidpointOfHand
+        self.getAveragePos = getAveragePos
 
     def rgbKinectcallback(self,data):
         if self.rgbDataLock.acquire(False):
@@ -265,9 +285,9 @@ class HandDetector(object):
                             print("remove hands")
                             self.avgX = None
                             self.avgY = None
-                            self.handCoordLock.acquire()
-                            self.handCoord = []
-                            self.handCoordLock.release()
+                            # self.handCoordLock.acquire()
+                            # self.handCoord = []
+                            # self.handCoordLock.release()
                             self.handsLock.acquire()
                             self.hands = [] # list of hand objects
                             self.handsLock.release()
@@ -283,9 +303,17 @@ class HandDetector(object):
 
                 fgmask = self.fgbg.apply(img)
                 hands = self.hands_cascade.detectMultiScale(fgmask, self.cascadeScaleFactor, self.cascadeMinNeighbors)
+                self.detectedHandsRectLock.acquire()
+                self.detectedHandsRect = []
+                print("Reset detectedHandsRect")
+                # self.detectedHandsRectLock.release()
                 for (x,y,w,h) in hands:
                     if not (math.isnan(x) or math.isnan(y) or math.isnan(w) or math.isnan(h)):
-                        self.addToHands(x,y,w,h)
+                        # self.detectedHandsRectLock.acquire()
+                        self.detectedHandsRect.append(Rectangle(x, y, w, h, time.time()))
+                        print("Added rect to detectedHandsRect")
+                        # self.detectedHandsRectLock.release()
+                        # self.addToHands(x,y,w,h)
                         # if dx is None and dy is None: # First time this hand was registered
                         #     self.shouldUpdateBaxterLock.acquire()
                         #     self.shouldUpdateBaxter = True
@@ -312,6 +340,7 @@ class HandDetector(object):
                         # self.avgX = x
                         # self.avgY = y
                         # self.avgZ = z
+                self.detectedHandsRectLock.release()
                 if self.avgX is not None and self.avgY is not None:# and self.avgZ is not None:
                     # pass
                     # print("avgX and Y", self.avgX, self.avgY)
@@ -324,7 +353,6 @@ class HandDetector(object):
                     circleThickness = 2
                     cv2.circle(fgmask, (int(self.avgX), int(self.avgY)),circleRadius,circleColor,circleThickness)
                     # cv2.circle(fgmask,(int(width-midX), int(height-midY)),30,(255,0,255), 2)
-
 
                 cv2.imshow("Image window", fgmask)
                 # Number of ms to show the image for
@@ -356,18 +384,48 @@ class HandDetector(object):
         # self.display_pub.publish(screen_dis)
         # cv2.waitKey(1)
 
-    def addToHands(self, x, y, w, h):
+    def classifyHands(self, hertz=10):
+        rate = rospy.Rate(hertz)
+        try:
+            while not rospy.is_shutdown() and not self.killThreads:
+                self.detectedHandsXYZLock.acquire()
+                if len(self.detectedHandsXYZ) == 0:
+                    self.detectedHandsXYZLock.release()
+                    # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
+                    # rate.sleep()
+                    # print("hand is none")
+                    continue
+                points = copy.copy(self.detectedHandsXYZ)
+                print("Copied detectedHandsXYZ")
+                self.detectedHandsXYZLock.release()
+                for point in points:
+                    self.addToHands(point)
+        except KeyboardInterrupt, rospy.ROSInterruptException:
+            return
+
+    def addToHands(self, point):
         self.handsLock.acquire()
-        rect = Rectangle(x, y, w, h, time.time())
-        for hand in self.hands:
+        i = 0
+        while True: # I do this to avoid python calculating the len at the beginning and not accounting for changes to the length through this loop
+            if i >= len(self.hands):
+                break
+            hand = self.hands[i]
+            recentPoint = hand.getLatestPos()
+            # Lazily remove detected hands if they are too old
+            if recentPoint is None or recentPoint.header.stamp.secs <= time.time()-self.timeToDeleteHand:
+                self.hands.pop(i)
+                continue
             # dx, dy, added = hand.addPosition(rect)
             # if added:
             #     self.handsLock.release()
             #     return dx, dy
-            if hand.addPosition(rect):
+            if hand.addPosition(point):
+                print("added to hands 1")
                 self.handsLock.release()
                 return
-        self.hands.append(Hand(rect, self.maxDx, self.maxDy))
+            i += 1
+        self.hands.append(Hand(point, self.maxDx, self.maxDy, self.maxDz))
+        print("added to hands 2")
         self.handsLock.release()
         return# None, None
 
@@ -376,30 +434,30 @@ class HandDetector(object):
     # of the robot (in this case I would have to change the voting part to
     # after we get the depth for all hands)?  Might help prevent the robot
     # from going to either the robot arm as a hand, or tthe ground as a hand
-    def getMostRecentXYOfMostLikelyHand(self):
-        self.handsLock.acquire()
-        if len(self.hands) == 0:
-            self.handsLock.release()
-            # print("hand len is 0")
-            return None
-        maxNum, maxAvgPos, maxI = 0, None, None
-        for i in xrange(len(self.hands)):
-            hand = self.hands[i]
-            pos, num = hand.getAveragePosByTime(self.avgHandXYDtime)
-            # print("abc", pos, num, hand)
-            if num > maxNum:
-                maxNum = num
-                maxAvgPos = pos
-                maxI = i
-        self.handsLock.release()
-        if maxI is None:
-            return None
-        mostRecentPos = self.hands[maxI].getLastestPos()
-        if mostRecentPos is None:
-            print("mostRecentPos was None!!!!!! :O")
-            return None
-        else:
-            return mostRecentPos
+    # def getMostRecentXYOfMostLikelyHand(self):
+    #     self.handsLock.acquire()
+    #     if len(self.hands) == 0:
+    #         self.handsLock.release()
+    #         # print("hand len is 0")
+    #         return None
+    #     maxNum, maxAvgPos, maxI = 0, None, None
+    #     for i in xrange(len(self.hands)):
+    #         hand = self.hands[i]
+    #         pos, num = hand.getAveragePosByTime(self.avgHandXYZDtime)
+    #         # print("abc", pos, num, hand)
+    #         if num > maxNum:
+    #             maxNum = num
+    #             maxAvgPos = pos
+    #             maxI = i
+    #     self.handsLock.release()
+    #     if maxI is None:
+    #         return None
+    #     mostRecentPos = self.hands[maxI].getLatestPos()
+    #     if mostRecentPos is None:
+    #         print("mostRecentPos was None!!!!!! :O")
+    #         return None
+    #     else:
+    #         return mostRecentPos
 
     def depthKinectcallback(self, data):
         if self.depthDataLock.acquire(False):
@@ -425,101 +483,127 @@ class HandDetector(object):
             # img_proc = PinholeCameraModel()
             # img_proc.fromCameraInfo(cam_info)
             while not rospy.is_shutdown() and not self.killThreads:
-                rect = self.getMostRecentXYOfMostLikelyHand()
-                # print("recent pos of likely hand is ", rect)
-                if rect is None:
-                    rate.sleep()
+                # TODO (amal): perhaps instead of only popping one, we pop until it is empty?
+                self.detectedHandsRectLock.acquire()
+                if len(self.detectedHandsRect) == 0:
+                    self.detectedHandsRectLock.release()
+                    # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
+                    # rate.sleep()
                     # print("hand is none")
                     continue
-                # print("Most Likely Hand x y", rect)
-                # xPrime = self.kinectRGBWidth-rect.x
-                # yPrime = self.kinectRGBHeight-rect.y
-                midX = rect.x + rect.w/2
-                midY = rect.y + rect.h/2
-                # print("calc mid 1", midX, midY)
-                # (x, y, z) = img_proc.projectPixelTo3dRay((midX, midY))
-                self.avgX = midX
-                self.avgY = midY
-                # self.avgZ = z
-                # self.avgX = midX
-                # self.avgY = midY
-                self.depthDataLock.acquire(True)
-                #print("release acqurie 2")
-                if self.depthData is None:
-                    #print("release 1")
-                    self.depthDataLock.release()
-                    # print("depth data is None")
-                    rate.sleep()
-                    continue
-                uvs = []
-                # uvs = [(midX, midY)]
-                dx = self.handHeightIntervalDx
-                dy = self.handHeightIntervalDy
-                # TODO (amal): change this hardcoded large number!
-                # avgX, avgY, avgZ, num = float(0),float(0),float(0),0
-                avgX, avgY, avgZ, num = float(0),float(0),None,0
-                for x in xrange(rect.x, rect.x+rect.w, dx):
-                    for y in xrange(rect.y, rect.y+rect.h, dy):
-                        if (x >= self.depthData.width) or (y >= self.depthData.height):
-                            #print("release 2")
-                            # print("hand coord is out of pix")
-                            continue
-                        uvs.append((x,y))
-                # print("uvs", uvs)
-                try:
-                    # TODO (amal): play around with this Nan thing!
-                    data_out = pc2.read_points(self.depthData, field_names=None, skip_nans=True, uvs=uvs)
-                except e:
-                    print(e)
-                    self.depthDataLock.release()
-                    continue
-                #print("release 3")
-                self.depthDataLock.release()
-                for i in xrange(len(uvs)):
+                rects = copy.copy(self.detectedHandsRect)
+                print("Copied detectedHandsRect")
+                self.detectedHandsRectLock.release()
+
+                self.detectedHandsXYZLock.acquire()
+                self.detectedHandsXYZ = []
+                print("Reset detectedHandsXYZ")
+                # self.detectedHandsXYZLock.release()
+
+                for rect in rects:
+                    # rect = self.getMostRecentXYOfMostLikelyHand()
+                    # print("recent pos of likely hand is ", rect)
+                    # if rect is None:
+                    #     time.sleep(1/hertz)
+                    #     # print("hand is none")
+                    #     continue
+                    # print("Most Likely Hand x y", rect)
+                    # xPrime = self.kinectRGBWidth-rect.x
+                    # yPrime = self.kinectRGBHeight-rect.y
+                    # midX = rect.x + rect.w/2
+                    # midY = rect.y + rect.h/2
+                    # print("calc mid 1", midX, midY)
+                    # (x, y, z) = img_proc.projectPixelTo3dRay((midX, midY))
+                    # self.avgX = midX
+                    # self.avgY = midY
+                    # self.avgZ = z
+                    # self.avgX = midX
+                    # self.avgY = midY
+                    self.depthDataLock.acquire(True)
+                    #print("release acqurie 2")
+                    if self.depthData is None:
+                        #print("release 1")
+                        self.depthDataLock.release()
+                        # print("depth data is None")
+                        # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
+                        # rate.sleep()
+                        continue
+                    uvs = []
+                    avgX, avgY, avgZ, num = float(0),float(0),None,0
+                    if self.getDepthAtMidpointOfHand:
+                        midX = rect.x + rect.w/2
+                        midY = rect.y + rect.h/2
+                        uvs = [(midX, midY)]
+                    else:
+                        dx = self.handHeightIntervalDx
+                        dy = self.handHeightIntervalDy
+                        # TODO (amal): change this hardcoded large number!
+                        # avgX, avgY, avgZ, num = float(0),float(0),float(0),0
+                        for x in xrange(rect.x, rect.x+rect.w, dx):
+                            for y in xrange(rect.y, rect.y+rect.h, dy):
+                                if (x >= self.depthData.width) or (y >= self.depthData.height):
+                                    #print("release 2")
+                                    # print("hand coord is out of pix")
+                                    continue
+                                uvs.append((x,y))
+                        # print("uvs", uvs)
                     try:
-                        handCoord = next(data_out)
-                    except StopIteration:
-                        # print("got nan")
-                        break
-                        # TODO (amal): what happens when robot hand on top of human hand?
-                    if not (math.isnan(handCoord[0]) or handCoord[0]==0.0 or math.isnan(handCoord[1]) or handCoord[1]==0.0 or math.isnan(handCoord[2]) or handCoord[2]==0.0 or handCoord[2] > self.groundZ - self.dZ):
-                        # if handCoord[0] < avgX:
-                            # avgX = handCoord[0]
-                        avgX += handCoord[0]
-                        # if avgY is None or handCoord[1] < avgY:
-                        #     avgY = handCoord[1] # min not avg
-                        avgY += handCoord[1]
-                        if avgZ is None or handCoord[2] < avgZ:
-                            avgZ = handCoord[2] # min not avg
-                        # avgZ += handCoord[2]
-                        num += 1
-                if num == 0:
-                    # print("got no points with intensity")
-                    rate.sleep()
-                    continue
-                # print("avg in depth", avgX, avgY, avgZ, num)
-                avgX /= float(num)
-                avgY /= float(num)
-                # avgZ /= float(num)
-                # print("depth", avgX, avgY, avgZ)
-                pointMsg = PointStamped()
-                pointMsg.header = self.depthData.header
-                # pointMsg.header = Header(stamp=rospy.Time.now(), frame_id='/camera_link')
-                pointMsg.point = Point()
-                # COORDINATE TRANSFORMATION!!!!
-                pointMsg.point.x = avgX
-                pointMsg.point.y = avgY
-                pointMsg.point.z = avgZ
-                # self.avgX = avgX
-                # self.avgY = avgY
-                # self.avgZ = avgZ
-                # self.handPositionPublisher.publish(pointMsg)
-                self.handCoordLock.acquire()
-                self.handCoord.append(pointMsg)
-                self.handCoordLock.release()
+                        # TODO (amal): play around with this Nan thing!
+                        data_out = pc2.read_points(self.depthData, field_names=None, skip_nans=True, uvs=uvs)
+                    except e:
+                        print(e)
+                        self.depthDataLock.release()
+                        continue
+                    #print("release 3")
+                    self.depthDataLock.release()
+                    for i in xrange(len(uvs)):
+                        try:
+                            handCoord = next(data_out)
+                        except StopIteration:
+                            # print("got nan")
+                            break
+                            # TODO (amal): what happens when robot hand on top of human hand?
+                        if not (math.isnan(handCoord[0]) or handCoord[0]==0.0 or math.isnan(handCoord[1]) or handCoord[1]==0.0 or math.isnan(handCoord[2]) or handCoord[2]==0.0 or handCoord[2] > self.groundZ - self.dZ):
+                            # if handCoord[0] < avgX:
+                                # avgX = handCoord[0]
+                            avgX += handCoord[0]
+                            # if avgY is None or handCoord[1] < avgY:
+                            #     avgY = handCoord[1] # min not avg
+                            avgY += handCoord[1]
+                            if avgZ is None or handCoord[2] < avgZ:
+                                avgZ = handCoord[2] # min not avg
+                            # avgZ += handCoord[2]
+                            num += 1
+                    if num == 0:
+                        # print("got no points with intensity")
+                        # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
+                        # rate.sleep()
+                        continue
+                    # print("avg in depth", avgX, avgY, avgZ, num)
+                    avgX /= float(num)
+                    avgY /= float(num)
+                    # avgZ /= float(num)
+                    # print("depth", avgX, avgY, avgZ)
+                    pointMsg = PointStamped()
+                    pointMsg.header = self.depthData.header
+                    # pointMsg.header = Header(stamp=rospy.Time.now(), frame_id='/camera_link')
+                    pointMsg.point = Point()
+                    # COORDINATE TRANSFORMATION!!!!
+                    pointMsg.point.x = avgX
+                    pointMsg.point.y = avgY
+                    pointMsg.point.z = avgZ
+                    # self.avgX = avgX
+                    # self.avgY = avgY
+                    # self.avgZ = avgZ
+                    # self.handPositionPublisher.publish(pointMsg)
+                    # self.detectedHandsXYZLock.acquire()
+                    self.detectedHandsXYZ.append(pointMsg)
+                    print("Added point to detectedHandsXYZ")
+                self.detectedHandsXYZLock.release()
 
                 # rospy.loginfo("hand coord " + repr(handCoord) + "len "+str(len(self.handCoord)))
-                rate.sleep()
+                # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
+                # rate.sleep()
         except KeyboardInterrupt, rospy.ROSInterruptException:
             return
 
@@ -543,53 +627,85 @@ class HandDetector(object):
     #     self.avgY = avgY
     #     return Coord(avgX, avgY, avgZ, None), nTimes
 
+    # TODO (amal): what if instead of determining most likely hand by a
+    # majority vote, I augment that with how close the hand is to the center
+    # of the robot (in this case I would have to change the voting part to
+    # after we get the depth for all hands)?  Might help prevent the robot
+    # from going to either the robot arm as a hand, or tthe ground as a hand
     # Gets the average of the last handCoord that the hand has been in between
     # the current time and interval dTime seconds
-    def getAveragePosByTime(self, dTime, hertz):
+    def getPosOfMostLikelyHand(self, dTime, hertz):
         rate = rospy.Rate(hertz)
         try:
             while not rospy.is_shutdown() and not self.killThreads:
-                rate.sleep()
-                # print("in getAveragePosByTime")
-                self.handCoordLock.acquire()
-                if len(self.handCoord) == 0:
-                    # print("len of self.handCoord is 0", self.handCoord)
-                    self.handCoordLock.release()
+                # rate.sleep()
+                print("in getAveragePosByTime")
+                self.handsLock.acquire()
+                if len(self.hands) == 0:
+                    print("len of self.hands is 0", self.hands)
+                    self.handsLock.release()
                     # return None, 0
+                    # rate.sleep()
                     continue
-                now = time.time()
-                # latestTime = self.handCoord[-1].now
-                avgX, avgY, avgZ, num = 0, 0, 0, 0
-                for coord in self.handCoord[-1::-1]: # reverse order
-                    # print("times", now,  int(coord.header.stamp.to_sec()))
-                    if now - coord.header.stamp.to_sec() <= dTime:
-                        avgX += coord.point.x
-                        avgY += coord.point.y
-                        avgZ += coord.point.z
-                        num += 1
-                    else:
-                        break # Assume times are in non-decreasing order
-                if num == 0:
-                    self.handCoordLock.release()
-                    # print("num is 0", num)
-                    # return None, num
+                maxNum, maxAvgPoint, maxI = 0, None, None
+                for i in xrange(len(self.hands)):
+                    hand = self.hands[i]
+                    pos, num = hand.getAveragePosByTime(self.avgHandXYZDtime)
+                    print("got avg pos of hand", pos, num)
+                    if num > maxNum:
+                        maxNum = num
+                        maxAvgPoint = pos
+                        maxI = i
+                self.handsLock.release()
+                if maxNum == 0:
+                    # rate.sleep()
                     continue
-                avgX /= num
-                avgY /= num
-                avgZ /= num
-                # self.avgX = avgX
-                # self.avgY = avgY
-                # self.avgZ = avgZ
-                print("avgposbytime", avgX, avgY, avgZ)
-                pointMsg = PointStamped()
-                pointMsg.header = self.handCoord[-1].header
-                pointMsg.point = Point()
-                # COORDINATE TRANSFORMATION!!!!
-                pointMsg.point.x = avgX
-                pointMsg.point.y = avgY
-                pointMsg.point.z = avgZ
-                self.handPositionPublisher.publish(pointMsg)
-                self.handCoordLock.release()
+                if self.getAveragePos:
+                    # if maxAvgPoint is None:
+                    #     print("maxAvgPoint was None!!!!!! :O")
+                    #     # return None, 0
+                    #     # rate.sleep()
+                    #     continue
+                    pointToPublish = maxAvgPoint
+                else:
+                    pointToPublish = self.hands[maxI].getLatestPos()
+                self.handPositionPublisher.publish(pointToPublish)
+                print("published pos", maxAvgPoint)
+                continue
+                # now = time.time()
+                # # latestTime = self.handCoord[-1].now
+                # avgX, avgY, avgZ, num = 0, 0, 0, 0
+                # for coord in self.handCoord[-1::-1]: # reverse order
+                #     # print("times", now,  int(coord.header.stamp.to_sec()))
+                #     if now - coord.header.stamp.to_sec() <= dTime:
+                #         avgX += coord.point.x
+                #         avgY += coord.point.y
+                #         avgZ += coord.point.z
+                #         num += 1
+                #     else:
+                #         break # Assume times are in non-decreasing order
+                # if num == 0:
+                #     self.handCoordLock.release()
+                #     # print("num is 0", num)
+                #     # return None, num
+                #     continue
+                # avgX /= num
+                # avgY /= num
+                # avgZ /= num
+                # # self.avgX = avgX
+                # # self.avgY = avgY
+                # # self.avgZ = avgZ
+                # print("avgposbytime", avgX, avgY, avgZ)
+
+                # pointMsg = PointStamped()
+                # pointMsg.header = self.handCoord[-1].header
+                # pointMsg.point = Point()
+                # # COORDINATE TRANSFORMATION!!!!
+                # pointMsg.point.x = avgX
+                # pointMsg.point.y = avgY
+                # pointMsg.point.z = avgZ
+                # self.handPositionPublisher.publish(pointMsg)
+                # self.handCoordLock.release()
                 # print("published!")
         except KeyboardInterrupt, rospy.ROSInterruptException:
           return
@@ -614,9 +730,11 @@ def main(args):
         handModelPath=rospy.get_param("reachingHand/HandDetector/handModelPath"),
         maxDx=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dx"),
         maxDy=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dy"),
+        maxDz=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dz"),
+        timeToDeleteHand=rospy.get_param("reachingHand/HandDetector/timeToDeleteHand"),
         groundDzThreshold=rospy.get_param("reachingHand/HandDetector/groundDzThreshold"),
         avgPosDtime=rospy.get_param("reachingHand/HandDetector/avgPosDtime"),
-        avgHandXYDtime=rospy.get_param("reachingHand/HandDetector/avgHandXYDtime"),
+        avgHandXYZDtime=rospy.get_param("reachingHand/HandDetector/avgHandXYZDtime"),
         maxIterationsWithNoDifference=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/maxIterations"),
         differenceThreshold=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/differenceThreshold"),
         differenceFactor=rospy.get_param("reachingHand/HandDetector/imageDifferenceParams/differenceFactor"),
@@ -624,6 +742,8 @@ def main(args):
         cascadeMinNeighbors=rospy.get_param("reachingHand/HandDetector/cascadeClassifierParams/minNeighbors"),
         handHeightIntervalDx=rospy.get_param("reachingHand/HandDetector/handHeightInterval/dx"),
         handHeightIntervalDy=rospy.get_param("reachingHand/HandDetector/handHeightInterval/dy"),
+        getDepthAtMidpointOfHand=rospy.get_param("reachingHand/HandDetector/getDepthAtMidpointOfHand"),
+        getAveragePos=rospy.get_param("reachingHand/HandDetector/getAveragePos"),
     )
     try:
         rospy.spin()

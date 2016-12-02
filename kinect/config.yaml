@@ -11,6 +11,12 @@ HandDetector:
   maxAllowedHandMotion:
     dx: 75
     dy: 75
+    dz: 50
+  # If we have not seen a hand in the same vicinity (as determined by the above
+  # dx, dy, dz variables) as a previously detected hand for timeToDeleteHand
+  # seconds, delete the previously detected hand.  This is a way to lazily
+  # clean up detected hands and therefore save memory.
+  timeToDeleteHand: 5
   # The distance above the ground (meters) such that if kinect detects a hand
   # at or below this height, it will ignore it
   groundDzThreshold: 0.5
@@ -19,7 +25,7 @@ HandDetector:
   avgPosDtime: 0.5
   # The number of seconds to average over to get the u, v, point of the most
   # likely hand
-  avgHandXYDtime: 1.0
+  avgHandXYZDtime: 1.0
   # If maxIterationsWithNoDifference consecutive images have a difference from
   # the previous frame of < differenceFactor, the HandDetector
   # will assume there is no human in the scene and reset the background.
@@ -41,6 +47,14 @@ HandDetector:
   handHeightInterval:
     dx: 10
     dy: 10
+  # A flag that determines whether we assume the depth of a hand is merely the
+  # depth at the midpoint of hand rectangle, or if it is the highest point
+  # (above the ground) in the whol handRect
+  getDepthAtMidpointOfHand: true
+  # A flag that determines whether the point we publish to the topic is the
+  # avergae position of the hand recently, or the more recent position of the
+  # hand
+  getAveragePos: false
 MovementController:
   # limb to move
   limb: 'left'
@@ -50,8 +64,11 @@ MovementController:
   # in order to consider the movement over (or in order to lock the target endpoint)
    # https://github.com/RethinkRobotics/baxter_interface/blob/master/src/baxter_interface/settings.py
   jointThreshold:
-    end: 0.008726646
-    warning: 0.3
+    end: 0.01
+    warning: 0.15
+    # Below are when the thresholds are for joints, not for end effector
+    # end: 0.008726646
+    # warning: 0.3
   # rate (hertz) for MovmementController to check whether it has an updated
   # endpoint after it has finished its rajectory
   updateQueryRate: 0.5
@@ -68,3 +85,6 @@ MovementController:
     y: 0.0
     z: 0.0
     w: 0.0
+  # The time to wait when waiting for the IK Service and for the TF camera-robot
+  # transofrm
+  timeToWait: 1.0
