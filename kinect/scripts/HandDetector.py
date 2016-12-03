@@ -191,53 +191,26 @@ class HandDetector(object):
     avgPosDtime, avgHandXYZDtime, maxIterationsWithNoDifference, differenceThreshold, differenceFactor,
     cascadeScaleFactor, cascadeMinNeighbors, handHeightIntervalDx, handHeightIntervalDy, getDepthAtMidpointOfHand, getAveragePos):
         self.bridge = CvBridge()
-        self.fgbg = cv2.BackgroundSubtractorMOG()
         # self.display_pub= rospy.Publisher('/robot/xdisplay',Image, queue_size=10)
-        self.hands = [] # list of hand objects
-        self.handsLock = threading.Lock()
-        self.shouldUpdateBaxter = False
-        self.shouldUpdateBaxterLock = threading.Lock()
+        # self.shouldUpdateBaxter = False
+        # self.shouldUpdateBaxterLock = threading.Lock()
         self.maxDx = maxDx
         self.maxDy = maxDy
         self.maxDz = maxDz
         self.timeToDeleteHand = timeToDeleteHand
         self.hands_cascade = cv2.CascadeClassifier(handModelPath)
-        self.killThreads = False
-        self.rgbData = None
-        self.rgbDataLock = threading.Lock()
-        rgbThread = threading.Thread(target=self.cascadeClassifier)
-        rgbThread.daemon = True
-        rgbThread.start()
-        self.detectedHandsRect = []
-        self.detectedHandsRectLock = threading.Lock()
-        self.detectedHandsXYZ = []
-        self.detectedHandsXYZLock = threading.Lock()
-        self.depthData = None
-        self.depthDataLock = threading.Lock()
-        depthThread = threading.Thread(target=self.getHandDepth)
-        depthThread.daemon = True
-        depthThread.start()
         # self.handCoord = []
         # self.handCoordLock = threading.Lock()
-        classifyHandsThread = threading.Thread(target=self.classifyHands, args=())
-        classifyHandsThread.daemon = True
-        classifyHandsThread.start()
-        self.rgb_image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.rgbKinectcallback, queue_size=1)
-        self.depth_registered_points_sub = rospy.Subscriber("/camera/depth_registered/points",PointCloud2,self.depthKinectcallback)
         self.handPositionPublisher = rospy.Publisher(topic, PointStamped, queue_size=1)
-        self.avgX = None
-        self.avgY = None
-        self.avgZ = None
+        # self.avgX = None
+        # self.avgY = None
+        # self.avgZ = None
         self.groundZ = None
         self.dZ = groundDzThreshold # Ignore all points with height +/- dz of groundz
         self.cascadeScaleFactor = cascadeScaleFactor
         self.cascadeMinNeighbors = cascadeMinNeighbors
-        avgPosThread = threading.Thread(target=self.getPosOfMostLikelyHand, args=(avgPosDtime,topicRate))
-        avgPosThread.daemon = True
-        avgPosThread.start()
         self.avgHandXYZDtime = avgHandXYZDtime
-        self.threads = [rgbThread, depthThread, avgPosThread, classifyHandsThread]
-        self.iterationsWithNoDifference = 0
+        # self.threads = [self.rgbThread, self.depthThread, self.avgPosThread, self.classifyHandsThread]
         self.maxIterationsWithNoDifference = maxIterationsWithNoDifference
         self.differenceThreshold = differenceThreshold
         self.differenceFactor = differenceFactor
@@ -245,6 +218,43 @@ class HandDetector(object):
         self.handHeightIntervalDy = handHeightIntervalDy
         self.getDepthAtMidpointOfHand = getDepthAtMidpointOfHand
         self.getAveragePos = getAveragePos
+        self.avgPosDtime=avgPosDtime
+        self.topicRate=topicRate
+
+    def start(self):
+        self.fgbg = cv2.BackgroundSubtractorMOG()
+        self.hands = [] # list of hand objects
+        self.handsLock = threading.Lock()
+        self.killThreads = False
+        self.rgbData = None
+        self.rgbDataLock = threading.Lock()
+        self.rgbThread = threading.Thread(target=self.cascadeClassifier)
+        self.rgbThread.daemon = True
+        self.rgb_image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.rgbKinectcallback, queue_size=1)
+        self.depth_registered_points_sub = rospy.Subscriber("/camera/depth_registered/points",PointCloud2,self.depthKinectcallback)
+        self.rgbThread.start()
+        self.detectedHandsRect = []
+        self.detectedHandsRectLock = threading.Lock()
+        self.detectedHandsXYZ = []
+        self.detectedHandsXYZLock = threading.Lock()
+        self.depthData = None
+        self.depthDataLock = threading.Lock()
+        self.iterationsWithNoDifference = 0
+        self.depthThread = threading.Thread(target=self.getHandDepth)
+        self.depthThread.daemon = True
+        self.depthThread.start()
+        self.classifyHandsThread = threading.Thread(target=self.classifyHands, args=())
+        self.classifyHandsThread.daemon = True
+        self.classifyHandsThread.start()
+        self.avgPosThread = threading.Thread(target=self.getPosOfMostLikelyHand, args=(self.avgPosDtime,self.topicRate))
+        self.avgPosThread.daemon = True
+        self.avgPosThread.start()
+
+    def stop(self):
+        self.rgb_image_sub.unregister()
+        self.depth_registered_points_sub.unregister()
+        self.killThreads = True
+        cv2.destroyAllWindows()
 
     def rgbKinectcallback(self,data):
         if self.rgbDataLock.acquire(False):
@@ -283,8 +293,8 @@ class HandDetector(object):
                         print("diff < threshold, iterations", self.iterationsWithNoDifference)
                         if self.iterationsWithNoDifference > self.maxIterationsWithNoDifference:
                             print("remove hands")
-                            self.avgX = None
-                            self.avgY = None
+                            # self.avgX = None
+                            # self.avgY = None
                             # self.handCoordLock.acquire()
                             # self.handCoord = []
                             # self.handCoordLock.release()
@@ -341,23 +351,24 @@ class HandDetector(object):
                         # self.avgY = y
                         # self.avgZ = z
                 self.detectedHandsRectLock.release()
-                if self.avgX is not None and self.avgY is not None:# and self.avgZ is not None:
-                    # pass
-                    # print("avgX and Y", self.avgX, self.avgY)
-                    # print("hand x and y", x, y)
-                    # u, v = img_proc.project3dToPixel((self.avgX, self.avgY, self.avgZ))
-                    # print("uv", u, v, "avgXYZ", self.avgX, self.avgY, self.avgZ, "wh", width, height)
-                    # print("avgXY", self.avgX, self.avgY)
-                    circleRadius  = 30
-                    circleColor = (255,0,0)
-                    circleThickness = 2
-                    cv2.circle(fgmask, (int(self.avgX), int(self.avgY)),circleRadius,circleColor,circleThickness)
-                    # cv2.circle(fgmask,(int(width-midX), int(height-midY)),30,(255,0,255), 2)
+                # if self.avgX is not None and self.avgY is not None:# and self.avgZ is not None:
+                #     # pass
+                #     # print("avgX and Y", self.avgX, self.avgY)
+                #     # print("hand x and y", x, y)
+                #     # u, v = img_proc.project3dToPixel((self.avgX, self.avgY, self.avgZ))
+                #     # print("uv", u, v, "avgXYZ", self.avgX, self.avgY, self.avgZ, "wh", width, height)
+                #     # print("avgXY", self.avgX, self.avgY)
+                #     circleRadius  = 30
+                #     circleColor = (255,0,0)
+                #     circleThickness = 2
+                #     cv2.circle(fgmask, (int(self.avgX), int(self.avgY)),circleRadius,circleColor,circleThickness)
+                #     # cv2.circle(fgmask,(int(width-midX), int(height-midY)),30,(255,0,255), 2)
 
                 cv2.imshow("Image window", fgmask)
                 # Number of ms to show the image for
                 cv2.waitKey(1)
         except KeyboardInterrupt, rospy.ROSInterruptException:
+            cv2.destroyAllWindows()
             return
             # cv2.destroyAllWindows()
             # rospy.sleep(5)
@@ -489,7 +500,7 @@ class HandDetector(object):
                     self.detectedHandsRectLock.release()
                     # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
                     # rate.sleep()
-                    # print("hand is none")
+                    print("no detected hands rects...")
                     continue
                 rects = copy.copy(self.detectedHandsRect)
                 print("Copied detectedHandsRect")
@@ -524,7 +535,7 @@ class HandDetector(object):
                     if self.depthData is None:
                         #print("release 1")
                         self.depthDataLock.release()
-                        # print("depth data is None")
+                        print("depth data is None")
                         # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
                         # rate.sleep()
                         continue
@@ -574,8 +585,10 @@ class HandDetector(object):
                                 avgZ = handCoord[2] # min not avg
                             # avgZ += handCoord[2]
                             num += 1
+                        else:
+                            print("got handcoord, but not valid (why?)", handCoord, self.groundZ)
                     if num == 0:
-                        # print("got no points with intensity")
+                        print("got no points with intensity")
                         # TODO (amal): should I do rate.sleep() or time.sleep(1/hertz?)
                         # rate.sleep()
                         continue
@@ -745,6 +758,7 @@ def main(args):
         getDepthAtMidpointOfHand=rospy.get_param("reachingHand/HandDetector/getDepthAtMidpointOfHand"),
         getAveragePos=rospy.get_param("reachingHand/HandDetector/getAveragePos"),
     )
+    detector.start()
     try:
         rospy.spin()
     except KeyboardInterrupt, rospy.ROSInterruptException:

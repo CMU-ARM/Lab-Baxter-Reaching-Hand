@@ -1,6 +1,8 @@
 ---
 # topic that HandDetector will publish to and MovementControler will Subscribe to.
 topic: "/hand_position"
+# camera is the name of the kinect in ros topics
+camera: "camera"
 HandDetector:
   # The HandDetector will Publish at the specifiedRate (hertz)
   topicRate: 20
@@ -56,6 +58,7 @@ HandDetector:
   # hand
   getAveragePos: false
 MovementController:
+  name: "movementController"
   # limb to move
   limb: 'left'
   # speedRatio to limit the velocity of baxter's arm
@@ -64,7 +67,7 @@ MovementController:
   # in order to consider the movement over (or in order to lock the target endpoint)
    # https://github.com/RethinkRobotics/baxter_interface/blob/master/src/baxter_interface/settings.py
   jointThreshold:
-    end: 0.01
+    end: 0.015
     warning: 0.15
     # Below are when the thresholds are for joints, not for end effector
     # end: 0.008726646

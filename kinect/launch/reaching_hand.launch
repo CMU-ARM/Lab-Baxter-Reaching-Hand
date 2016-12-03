@@ -21,8 +21,9 @@
 
    <!-- <include file="$(find baxter_moveit_config)/launch/move_group.launch"/> -->
 
-   <node pkg="lab_reaching_hand_kinect" type="HandDetector.py" name="hand_detector" args="-c $(arg camera)"/>
-   <node pkg="lab_reaching_hand_kinect" type="MovementController.py" name="movement_controller" output="screen"/>
+   <!-- <node pkg="lab_reaching_hand_kinect" type="HandDetector.py" name="hand_detector" args="-c $(arg camera)"/> -->
+   <node pkg="lab_reaching_hand_kinect" type="MovementControllerActionLib.py" name="movement_controller_action_lib" output="screen"/>
+   <!-- <node pkg="lab_reaching_hand_kinect" type="sampleClient.py" name="movement_controller_client" output="screen"/> -->
    <node pkg="rviz" type="rviz" name="reachingHandRviz"/>
 
    <!-- <node pkg="lab_reaching_hand_kinect" type="reaching_hand.py" name="reaching_hand"/>
