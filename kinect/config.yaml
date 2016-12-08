@@ -4,12 +4,14 @@ topic: "/hand_position"
 # camera is the name of the kinect in ros topics
 camera: "camera"
 HandDetector:
-  # The HandDetector will Publish at the specifiedRate (hertz)
-  topicRate: 20
+  # rate is the hertz that all aspects of the hand classifier will be run at.
+  # this includes the rate at which it publishes to the topic
+  rate: 50
   # The path of the hand model for the Cascade Classifier
   handModelPath: '/home/amal/baxter_ws/src/Lab-Baxter-Reaching-Hand/kinect/haarcascade_hand.xml'
-  # The max pixels (in a 640x480 kinect image) the hand can move between frames
-  # in order to be classified as the same hand
+  # The max cm/s a hand can move in each direction in order to be classified as
+  # the same hand (i.e. if the cascade classifier detects a hand that is farther
+  # than the allowed motion, assume it is a new hand).
   maxAllowedHandMotion:
     dx: 75
     dy: 75
@@ -36,7 +38,7 @@ HandDetector:
   imageDifferenceParams:
     maxIterations: 50
     differenceThreshold: 28
-    differenceFactor: 0.007
+    differenceFactor: 0.008
   # The amount to scale the image by each iteration of cascade classification, and
   # the minNeightbors argument when using cv2's Cascade Classifier
   cascadeClassifierParams:
@@ -51,7 +53,7 @@ HandDetector:
     dy: 10
   # A flag that determines whether we assume the depth of a hand is merely the
   # depth at the midpoint of hand rectangle, or if it is the highest point
-  # (above the ground) in the whol handRect
+  # (above the ground) in the whole handRect
   getDepthAtMidpointOfHand: true
   # A flag that determines whether the point we publish to the topic is the
   # avergae position of the hand recently, or the more recent position of the
