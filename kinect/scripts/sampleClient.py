@@ -11,6 +11,7 @@ import rospy
 from lab_reaching_hand_kinect.msg import (
     ReachingHandAction,
     ReachingHandGoal,
+    ReachingHandFeedback,
 )
 
 
@@ -29,13 +30,16 @@ def movementControllerClient():
     goal = ReachingHandGoal()
 
     # Sends the goal to the action server.
-    client.send_goal(goal)
+    client.send_goal(goal, feedback_cb=feedbackCallback)
 
     # Waits for the server to finish performing the action.
     client.wait_for_result()
 
     # Prints out the result of executing the action
     return client.get_result()  # A FibonacciResult
+
+def feedbackCallback(feedback):
+    print("Feedback: ", feedback)
 
 if __name__ == '__main__':
     try:

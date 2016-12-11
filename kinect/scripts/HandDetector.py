@@ -71,15 +71,15 @@ class Hand(object):
         print("couldHaveMovedHere", point, self.positions[-1])
         pointTime = point.header.stamp.secs*10**9+point.header.stamp.nsecs
         lastPositionTime = self.positions[-1].header.stamp.secs*10**9+self.positions[-1].header.stamp.nsecs
-        dtime = pointTime-lastPositionTime
+        dtime = float(pointTime-lastPositionTime)/10**9 # convert to secs
         print("dtime", dtime)
         if dtime == 0 or dtime == 0.0:
             return True
-        dX = point.point.x-self.positions[-1].point.x
-        dY = point.point.y-self.positions[-1].point.y
-        dZ = point.point.z-self.positions[-1].point.z
+        dX = abs(point.point.x-self.positions[-1].point.x)*10**2 # convert to cm
+        dY = abs(point.point.y-self.positions[-1].point.y)*10**2 # convert to cm
+        dZ = abs(point.point.z-self.positions[-1].point.z)*10**2 # convert to cm
         xRate, yRate, zRate = dX/dtime, dY/dtime, dZ/dtime
-        print("rates", xRate, yRate, zRate)
+        print("rates", xRate, yRate, zRate, self.maxDx, self.maxDy, self.maxDz)
         return (xRate < self.maxDx and yRate < self.maxDy and zRate < self.maxDz)
 
     # returns whether the rect was appended (if the hand could viably move there).
@@ -275,7 +275,7 @@ class HandDetector(object):
     def addToHands(self, point):
         self.handsLock.acquire()
         i = 0
-        print("addToHands", self.hands)
+        print("addToHands", len(self.hands), self.hands)
         while True: # I do this to avoid python calculating the len at the beginning and not accounting for changes to the length through this loop
             if i >= len(self.hands):
                 break
@@ -308,7 +308,7 @@ class HandDetector(object):
                         if maxZ is None or handCoord[2] > maxZ:
                             maxZ = handCoord[2]
                 self.groundZ = maxZ
-                #print("groundZ", maxZ)
+                print("groundZ", maxZ)
             self.depthData = data
             #print("release 4")
             self.depthDataLock.release()
@@ -360,17 +360,20 @@ class HandDetector(object):
                                 uvs.append((x,y))
                         #print("uvs", uvs)
                     try:
-                        data_out = pc2.read_points(self.depthData, field_names=None, skip_nans=True, uvs=uvs)
+                        data_out = pc2.read_points(self.depthData, field_names=None, skip_nans=False, uvs=uvs)
                     except e:
                         #print(e)
                         self.depthDataLock.release()
                         continue
                     #print("release 3")
                     self.depthDataLock.release()
+                    print("uvs", len(uvs))
                     for i in xrange(len(uvs)):
                         try:
                             handCoord = next(data_out)
+                            print("handCoord", handCoord)
                         except StopIteration:
+                            print("got StopIteration")
                             break
                         if not (math.isnan(handCoord[0]) or handCoord[0]==0.0 or math.isnan(handCoord[1]) or handCoord[1]==0.0 or math.isnan(handCoord[2]) or handCoord[2]==0.0 or handCoord[2] > self.groundZ - self.dZ):
                             avgX += handCoord[0]

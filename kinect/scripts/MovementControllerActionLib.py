@@ -1,27 +1,13 @@
 #!/usr/bin/env python
-from __future__ import print_function
-import numpy as np
-import roslib
-from roslib import message
-roslib.load_manifest('test_cam')
 import sys
 import rospy
-import cv2
 import math
-from std_msgs.msg import String
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge, CvBridgeError
-import baxter_interface
-import sensor_msgs.point_cloud2 as pc2
-from sensor_msgs.msg import PointCloud2, PointField
-from geometry_msgs.msg import PoseStamped
 import time
 import threading
-import struct
 import argparse
-from tf import TransformListener
+import actionlib
 import tf
-from baxter_interface import settings
+from HandDetector import HandDetector
 from sensor_msgs.msg import (
     JointState
 )
@@ -32,7 +18,6 @@ from baxter_core_msgs.msg import (
 from geometry_msgs.msg import (
     PoseStamped,
     Pose,
-    Point,
     PointStamped,
     Quaternion,
 )
@@ -44,15 +29,11 @@ from std_msgs.msg import (
     Float64,
     Header,
 )
-import actionlib
 from lab_reaching_hand_kinect.msg import (
     ReachingHandFeedback,
     ReachingHandResult,
     ReachingHandAction,
 )
-# import roslaunch
-from HandDetector import HandDetector
-# TODO (amal): clean up these imports!!!!
 
 class MovementController(object):
     def __init__(self, limb, topic,camera,speedRatio, jointThresholdEnd,
@@ -107,7 +88,7 @@ class MovementController(object):
     def createHandDetector(self):
         detector = HandDetector(
             topic=rospy.get_param("reachingHand/topic"),
-            topicRate=rospy.get_param("reachingHand/HandDetector/topicRate"),
+            rate=rospy.get_param("reachingHand/HandDetector/rate"),
             cameraName=self.camera,
             handModelPath=rospy.get_param("reachingHand/HandDetector/handModelPath"),
             maxDx=rospy.get_param("reachingHand/HandDetector/maxAllowedHandMotion/dx"),
@@ -131,12 +112,6 @@ class MovementController(object):
 
     def execute_cb(self, goal):
         # Launch the HandDetector
-        # package = 'lab_reaching_hand_kinect'
-        # executable = 'HandDetector.py'
-        # node = roslaunch.core.Node(package, executable)
-        # launch = roslaunch.scriptapi.ROSLaunch()
-        # launch.start()
-        # handDetectorProcess = launch.launch(node)
         self.handDetector.start()
 
         # Subscribe to necessary topics and create necessary background threads
@@ -147,8 +122,6 @@ class MovementController(object):
         self.targetPoint = None
         self.killThreads = False
         self.targetPositionLock = threading.Lock()
-        # moveArmThread = threading.Thread(target=self.moveArm, args=(self.jointThresholdEnd, self.jointThresholdWarning, self.updateQueryRate, self.jointFilteringFactorFar, self.jointFilteringFactorClose))
-        # moveArmThread.start()
         self.targetEndEffectorPointTopic = rospy.Subscriber(self.topic, PointStamped, self.targetEndEffectorPointCallback, queue_size=1)
         self.targetEndEffectorPoint = None
         self.targetEndEffectorPointLock = threading.Lock()
@@ -159,14 +132,12 @@ class MovementController(object):
         endEffectorThread = threading.Thread(target=self.setTargetEndEffectorPosition, args=(self.orientationX, self.orientationY, self.orientationZ, self.orientationW))
         endEffectorThread.daemon = True
         endEffectorThread.start()
-        # self.threads = [self.endEffectorThread]
         # Move the arm
         self.moveArm(self.jointThresholdEnd, self.jointThresholdWarning, self.updateQueryRate, self.jointFilteringFactorFar, self.jointFilteringFactorClose)
         # Kill threads, unregister topics, and kill the HandDetector Node
         self.killThreads = True
         self.targetEndEffectorPointTopic.unregister()
         self.actualEndEffectorPoseTopic.unregister()
-        # handDetectorProcess.stop()
         self.handDetector.stop()
 
 
@@ -188,16 +159,6 @@ class MovementController(object):
         rate = rospy.Rate(updateQueryRate)
         print("moveArm")
         def genf(targetPoint, targetOrientation):
-        # def genf(joint, angle):
-            # def jointDiff():
-            #     self.jointAnglesLock.acquire()
-            #     if len(self.jointAngles) == 0:
-            #         retVal = 0
-            #     else:
-            #         retVal = abs(angle - self.jointAngles[joint])
-            #         print(joint, retVal)
-            #     self.jointAnglesLock.release()
-            #     return retVal
             def endEffectorDiff():
                 self.actualEndEffectorPoseLock.acquire()
                 if self.actualEndEffectorPose is None:
@@ -217,7 +178,6 @@ class MovementController(object):
             return endEffectorDiff
 
         # Wait until we have read the joint state at least once
-        # TODO (amal): do something better than a spin lock
         try:
             while not rospy.is_shutdown() and (len(self.jointAngles) == 0 or len(self.targetPosition) == 0 or self.actualEndEffectorPose is None) and not self.killThreads:
                 if self.actionServer.is_preempt_requested():
@@ -228,11 +188,6 @@ class MovementController(object):
         except KeyboardInterrupt, rospy.ROSInterruptException:
             self.abort()
             return
-
-        # TODO (amal): do i have a race condition here from not locking targetPose?
-        # def diffs():
-        #     # return genf(self.targetPose.position, self.targetPose.orientation)
-        #     return [genf(j, a) for j, a in self.targetPosition.items() if j in self.jointAngles]
 
         reachedTarget = True
         commandMsg = JointCommand()
@@ -248,9 +203,6 @@ class MovementController(object):
                         rate.sleep()
                         continue
                     self.shouldUpdateBaxterTargetLock.release()
-                # self.targetPositionLock.acquire()
-                # positions = self.targetPosition
-                # self.targetPositionLock.release()
 
                 # TODO (amal): look into exponential moving average
                 def filtered_cmd():
@@ -258,8 +210,6 @@ class MovementController(object):
                     if not self.closeToTarget:
                         self.targetPositionLock.acquire()
                     retPositions = dict()
-                    # First Order Filter - ????? Hz Cutoff
-                    # factor = 0.012488
                     factor =jointFilteringFactorFar
                     if self.closeToTarget:
                         factor = jointFilteringFactorClose
@@ -277,16 +227,13 @@ class MovementController(object):
                     if rospy.is_shutdown() or self.killThreads:
                         return False
                     allDiffsWithinWarning = True
-                    # TODO (amal): is this a race because I don't lock targetPose?
+                    # TODO (amal): is this a race condition because I don't lock targetPose?
                     positionDiff, orientationDiff = genf(self.targetPose.pose.position, self.targetPose.pose.orientation)()
                     diff = positionDiff+orientationDiff
                     self.feedback.distance = float(diff)
                     self.actionServer.publish_feedback(self.feedback)
                     if diff > jointThresholdWarning:
                         allDiffsWithinWarning = False
-                    # for diff in diffs():
-                    #     if diff() > jointThresholdWarning:
-                    #         allDiffsWithinWarning = False
                     if allDiffsWithinWarning and not self.closeToTarget:
                         print("WITHIN WARNING!")
                         # Don't let the target point get changed from now till the hand reaches its target
@@ -297,10 +244,6 @@ class MovementController(object):
                     if positionDiff+orientationDiff > jointThresholdEnd:
                         print("outside of threshold")
                         return True
-                    # for diff in diffs():
-                    #     if diff() > jointThresholdEnd:
-                    #         print("outside of threshold")
-                    #         return True
                     return False
                 try:
                     # print("before loop guard")
@@ -309,7 +252,6 @@ class MovementController(object):
                         position = filtered_cmd()
                         commandMsg.names = position.keys()
                         commandMsg.command = position.values()
-                        # commandMsg.command = self.targetPosition.values()
                         # print(self.jointAngles, self.targetPosition, position)
                         commandMsg.mode = JointCommand.POSITION_MODE
                         self.pub_joint_cmd.publish(commandMsg)
@@ -325,9 +267,6 @@ class MovementController(object):
                     self.targetPositionLock.release()
                     self.closeToTarget = False
                 reachedTarget = True
-                # for diff in diffs():
-                #     if diff() > threshold:
-                #         continue
                 self.shouldUpdateBaxterTargetLock.acquire()
                 self.shouldUpdateBaxterTarget = False
                 print("DONE DONE DONE!!!")
@@ -341,23 +280,16 @@ class MovementController(object):
     def abort(self):
         print("abort")
         self.actionServer.set_aborted()
-        # self.killThreads = True
-        # self.targetEndEffectorPointTopic.unregister()
-        # self.actualEndEffectorPoseTopic.unregister()
         return
 
     def success(self):
         print("success")
         self.actionServer.set_succeeded()
-        # TODO(amal): if this does not succeed in killing threads, explicitly kill by self.threads list
         return
 
     def preempt(self):
         print("preempt")
         self.actionServer.set_preempted()
-        # self.killThreads = True
-        # self.targetEndEffectorPointTopic.unregister()
-        # self.actualEndEffectorPoseTopic.unregister()
         return
 
     def targetEndEffectorPointCallback(self, point):
@@ -367,7 +299,7 @@ class MovementController(object):
             self.targetEndEffectorPointLock.release()
 
     def setTargetEndEffectorPosition(self, orientationX, orientationY, orientationZ, orientationW):
-        listener = TransformListener()
+        listener = tf.TransformListener()
         try:
             while not rospy.is_shutdown() and not self.killThreads:
                 # print("setTargetEndEffectorPosition")
@@ -384,18 +316,7 @@ class MovementController(object):
                     print("TF Failure", e)
                     self.targetEndEffectorPointLock.release()
                     continue
-                # If the target point is at similar x and y, but the z has jumped, assume we are detecting the robot hand
-                # dx = 0.05
-                # dy = 0.05
-                # dz = 0.1
-                # if self.targetPoint is not None and abs(transformedPoint.point.x - self.targetPoint.point.x) < dx and abs(transformedPoint.point.y - self.targetPoint.point.y) < dy and abs(transformedPoint.point.z - self.targetPoint.point.z) > dz:
-                #     print("detected robot hand")
-                #     self.targetEndEffectorPointLock.release()
-                #     rospy.sleep(timeToSleep)
-                #     continue
                 ikreq = SolvePositionIKRequest()
-                # hdr = self.targetEndEffectorPoint.header
-                # hdr = Header(stamp=rospy.Time.now(), frame_id='/camera_rgb_optical_frame')
                 pose = PoseStamped(
                     header=transformedPoint.header,
                     pose=Pose(
@@ -413,26 +334,13 @@ class MovementController(object):
                 # print("in setTargetEndEffectorPosition")
                 ikreq.pose_stamp.append(pose)
                 try:
-                    # TODO (amal): remove the magic number 1.0
                     rospy.wait_for_service(self.iksvcStringLimb, self.timeToWait)
                     resp = self.iksvcLimb(ikreq)
                 except (rospy.ServiceException, rospy.ROSException), e:
-                    # rospy.logerr("IK service call failed: %s" % (e,))
                     # TODO (amal): check error handling!!!
                     print(e)
                     continue
-                # resp_seeds = struct.unpack('<%dB' % len(resp.result_type),
-                #                            resp.result_type)
-                # TODO (amal): sometimes it says it is valid here but actually the sets are empty....
-                if (resp.isValid and len(resp.joints[0].position) > 0):#(resp_seeds[0] != resp.RESULT_INVALID):
-                    # seed_str = {
-                    #             ikreq.SEED_USER: 'User Provided Seed',
-                    #             ikreq.SEED_CURRENT: 'Current Joint Angles',
-                    #             ikreq.SEED_NS_MAP: 'Nullspace Setpoints',
-                    #            }.get(resp_seeds[0], 'None')
-                    # print("SUCCESS - Valid Joint Solution Found from Seed Type: %s" %
-                    #       (seed_str,))
-                    # # Format solution into Limb API-compatible dictionary
+                if (resp.isValid and len(resp.joints[0].position) > 0):
                     print("set target end effector pre acquire")
                     self.targetPositionLock.acquire()
                     print("set target end effector post acquire")
@@ -451,24 +359,20 @@ class MovementController(object):
             return
 
 def main(args):
-    # arg_fmt = argparse.RawDescriptionHelpFormatter
-    # parser = argparse.ArgumentParser(formatter_class=arg_fmt,
-    #                                  description=main.__doc__)
-    # parser.add_argument(
-    #     '-l', '--limb', choices=['left', 'right'], required=True,
-    #     help="the limb to test"
-    # )
-    # parser.add_argument(
-    #     '-t', '--topic', required=True,
-    #     help="the limb to publish hand points to"
-    # )
-    # args = parser.parse_args(rospy.myargv()[1:])
+    arg_fmt = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(formatter_class=arg_fmt,
+                                     description=main.__doc__)
+    parser.add_argument(
+        '-c', '--camera', required=True,
+        help="the camera name"
+    )
+    args = parser.parse_args(rospy.myargv()[1:])
     name = rospy.get_param("reachingHand/MovementController/name")
     rospy.init_node(name, anonymous=False)
     movementController = MovementController(
         limb=rospy.get_param("reachingHand/MovementController/limb"),
         topic=rospy.get_param("reachingHand/topic"),
-        camera=rospy.get_param("reachingHand/camera"),
+        camera=args.camera,
         speedRatio=rospy.get_param("reachingHand/MovementController/speedRatio"),
         jointThresholdEnd=rospy.get_param("reachingHand/MovementController/jointThreshold/end"),
         jointThresholdWarning=rospy.get_param("reachingHand/MovementController/jointThreshold/warning"),
@@ -482,9 +386,6 @@ def main(args):
         timeToWait=rospy.get_param("reachingHand/MovementController/timeToWait"),
         name=name
     )
-    # movementController.setTargetEndEffectorPosition(0.5, 0.5, 0.0)
-    # rospy.sleep(1.5)
-    # movementController.setTargetEndEffectorPosition(0.75, 0.5, 0.0)
     try:
         rospy.spin()
     except KeyboardInterrupt, rospy.ROSInterruptException:

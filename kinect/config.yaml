@@ -1,8 +1,6 @@
 ---
 # topic that HandDetector will publish to and MovementControler will Subscribe to.
 topic: "/hand_position"
-# camera is the name of the kinect in ros topics
-camera: "camera"
 HandDetector:
   # rate is the hertz that all aspects of the hand classifier will be run at.
   # this includes the rate at which it publishes to the topic
@@ -13,9 +11,9 @@ HandDetector:
   # the same hand (i.e. if the cascade classifier detects a hand that is farther
   # than the allowed motion, assume it is a new hand).
   maxAllowedHandMotion:
-    dx: 75
-    dy: 75
-    dz: 50
+    dx: 60
+    dy: 60
+    dz: 40
   # If we have not seen a hand in the same vicinity (as determined by the above
   # dx, dy, dz variables) as a previously detected hand for timeToDeleteHand
   # seconds, delete the previously detected hand.  This is a way to lazily
@@ -54,7 +52,7 @@ HandDetector:
   # A flag that determines whether we assume the depth of a hand is merely the
   # depth at the midpoint of hand rectangle, or if it is the highest point
   # (above the ground) in the whole handRect
-  getDepthAtMidpointOfHand: true
+  getDepthAtMidpointOfHand: false
   # A flag that determines whether the point we publish to the topic is the
   # avergae position of the hand recently, or the more recent position of the
   # hand
